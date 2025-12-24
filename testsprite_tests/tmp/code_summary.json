@@ -1,0 +1,162 @@
+{
+  "project_name": "Finance Prasasti Group Dashboard",
+  "project_type": "full-stack",
+  "description": "Dashboard keuangan modern untuk Finance Prasasti Group dengan sistem manajemen Payment Request, Kasbon, Klaim, dan Penyelesaian",
+  
+  "tech_stack": {
+    "frontend": {
+      "framework": "React 18",
+      "build_tool": "Vite",
+      "styling": "Tailwind CSS",
+      "routing": "React Router DOM",
+      "state_management": "React Context API (AuthContext, VendorContext, ToastContext, NotificationContext)",
+      "charts": "Recharts",
+      "icons": "Lucide React",
+      "http_client": "Axios",
+      "backend_service": "Supabase Client",
+      "additional_libraries": ["jspdf", "xlsx", "file-saver", "jszip", "bcryptjs"]
+    },
+    "backend": {
+      "runtime": "Node.js",
+      "framework": "Express.js",
+      "database": "PostgreSQL (via Supabase)",
+      "authentication": "JWT (jsonwebtoken), bcryptjs",
+      "file_upload": "Multer",
+      "cors": "CORS middleware",
+      "environment": "dotenv"
+    },
+    "infrastructure": {
+      "database": "Supabase PostgreSQL",
+      "storage": "Cloudflare R2",
+      "serverless": "Cloudflare Workers",
+      "deployment": "Docker, Docker Compose, Cloudflare Pages"
+    }
+  },
+  
+  "features": [
+    {
+      "name": "Authentication & Authorization",
+      "description": "Sistem login dengan JWT, role-based access control (Administrator, Team Finance, BOD, Manager, Staff, Guest), protected routes, session management",
+      "endpoints": ["/api/auth/login", "/api/auth/logout", "/api/auth/verify"]
+    },
+    {
+      "name": "Payment Request",
+      "description": "Kelola permintaan pembayaran dengan auto-generate nomor PR, nomor QL, tanggal otomatis, dropdown tipe perusahaan, format nominal ribuan, vendor integration, file upload, status tracking (Pending/Approved/Rejected)",
+      "endpoints": ["/api/payment-requests"]
+    },
+    {
+      "name": "Kasbon (Cash Advance)",
+      "description": "Manajemen kasbon karyawan dengan pengajuan, tracking, dan detail kasbon",
+      "endpoints": ["/api/kasbon"]
+    },
+    {
+      "name": "Klaim (Reimbursement)",
+      "description": "Sistem klaim reimbursement dengan kategori jenis klaim",
+      "endpoints": ["/api/klaim"]
+    },
+    {
+      "name": "Penyelesaian (Settlement)",
+      "description": "Pertanggungjawaban kasbon dan payment request dengan breakdown jumlah",
+      "endpoints": ["/api/penyelesaian"]
+    },
+    {
+      "name": "Vendor Management",
+      "description": "Master data vendor dan supplier dengan validasi nomor rekening, CRUD operations",
+      "endpoints": ["/api/vendors"]
+    },
+    {
+      "name": "User Management",
+      "description": "Manajemen user/karyawan (admin only), profile management",
+      "endpoints": ["/api/users"]
+    },
+    {
+      "name": "Activity Logs",
+      "description": "Log aktivitas user untuk audit trail",
+      "endpoints": ["/api/activity-logs"]
+    },
+    {
+      "name": "Reporting",
+      "description": "Laporan keuangan dengan akses terbatas (administrator, team_finance, bod)",
+      "endpoints": ["/api/laporan"]
+    },
+    {
+      "name": "Recurring Transactions",
+      "description": "Transaksi berulang dengan instances management",
+      "endpoints": ["/api/recurring-transactions", "/api/recurring-instances"]
+    },
+    {
+      "name": "File Upload",
+      "description": "Upload file ke Cloudflare R2 dengan struktur folder terorganisir berdasarkan document-type/year/month/document-id",
+      "endpoints": ["/api/upload"]
+    },
+    {
+      "name": "Dashboard",
+      "description": "Dashboard utama dengan menu cards, statistik, dan navigasi ke modul-modul utama"
+    },
+    {
+      "name": "Backup",
+      "description": "Backup data (admin only)"
+    },
+    {
+      "name": "Performance Monitoring",
+      "description": "Monitoring performa aplikasi (admin only)"
+    }
+  ],
+  
+  "project_structure": {
+    "frontend_path": "frontend/",
+    "backend_path": "backend/",
+    "main_components": [
+      "Dashboard.jsx",
+      "PaymentRequest.jsx",
+      "Kasbon.jsx",
+      "Klaim.jsx",
+      "Penyelesaian.jsx",
+      "Vendor.jsx",
+      "Laporan.jsx",
+      "ActivityLog.jsx",
+      "Karyawan.jsx"
+    ],
+    "api_routes": [
+      "/api/auth",
+      "/api/payment-requests",
+      "/api/kasbon",
+      "/api/klaim",
+      "/api/penyelesaian",
+      "/api/vendors",
+      "/api/users",
+      "/api/activity-logs",
+      "/api/upload",
+      "/api/recurring-transactions",
+      "/api/recurring-instances"
+    ]
+  },
+  
+  "ports": {
+    "frontend_dev": 5173,
+    "frontend_prod": 3000,
+    "backend": 3001
+  },
+  
+  "authentication": {
+    "type": "JWT-based authentication",
+    "session_management": "Supabase Auth",
+    "roles": ["administrator", "team_finance", "bod", "manager", "staff", "guest"]
+  },
+  
+  "database_schema": {
+    "location": "supabase/schema.sql, supabase/complete_setup.sql",
+    "main_tables": [
+      "payment_requests",
+      "kasbon",
+      "klaim",
+      "penyelesaian",
+      "vendors",
+      "users",
+      "activity_logs",
+      "recurring_transactions",
+      "recurring_instances"
+    ]
+  }
+}
+

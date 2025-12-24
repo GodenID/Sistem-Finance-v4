@@ -1,0 +1,26 @@
+# Wrangler configuration untuk Wasabi Upload Worker
+name = "wasabi-upload-worker"
+main = "wasabi-upload-v2.js"
+compatibility_date = "2024-01-01"
+
+# Environment variables untuk Wasabi
+# Set ini via Cloudflare Dashboard atau wrangler secret put
+# Jangan hardcode credentials di file ini!
+
+# [vars]
+# WASABI_BUCKET = "finance-v3"  # Ganti dengan nama bucket Anda yang sebenarnya
+# WASABI_REGION = "ap-southeast-1"  # Ganti dengan region bucket Anda
+# WASABI_ENDPOINT = "https://s3.ap-southeast-1.wasabisys.com"  # Sesuaikan dengan region
+# WASABI_PUBLIC_URL = "https://finance-v3.s3.ap-southeast-1.wasabisys.com"  # Sesuaikan dengan bucket dan region
+# atau jika menggunakan custom domain:
+# WASABI_PUBLIC_URL = "https://cdn.yourdomain.com"
+
+# Secrets (set via: wrangler secret put WASABI_ACCESS_KEY)
+# WASABI_ACCESS_KEY - Wasabi Access Key ID
+# WASABI_SECRET_KEY - Wasabi Secret Access Key
+
+# Catatan:
+# 1. Set secrets via Cloudflare Dashboard atau wrangler secret put
+# 2. Set variables via Cloudflare Dashboard atau wrangler.toml [vars]
+# 3. Deploy dengan: wrangler deploy --config wrangler-wasabi.toml
+

@@ -1,0 +1,20 @@
+# Wrangler configuration untuk R2 Proxy Worker
+# Worker ini digunakan untuk proxy file dari R2 dengan CORS headers
+
+name = "r2-proxy-worker"
+main = "r2-proxy.js"
+compatibility_date = "2024-01-01"
+
+# R2 bucket binding
+[[r2_buckets]]
+binding = "MY_BUCKET"
+bucket_name = "finance-v3"
+
+# Catatan:
+# 1. Ganti bucket_name dengan nama bucket R2 Anda
+# 2. Deploy dengan: wrangler deploy --config wrangler-proxy.toml
+# 3. Gunakan URL Worker untuk akses file:
+#    https://r2-proxy-worker.your-account.workers.dev/?file=payment-requests/2025/11/pr-0002/file.pdf
+#    atau
+#    https://r2-proxy-worker.your-account.workers.dev/payment-requests/2025/11/pr-0002/file.pdf
+

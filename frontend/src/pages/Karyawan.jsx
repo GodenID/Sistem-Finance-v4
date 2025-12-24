@@ -1,0 +1,646 @@
+import React, { useState, useEffect } from 'react';
+import { Users, UserPlus, Search, X, Eye, EyeOff, Edit2 } from 'lucide-react';
+import { getAllRecords, createRecord, updateRecord, deleteRecord } from '../lib/api';
+
+const Karyawan = () => {
+  const [karyawan, setKaryawan] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [showModal, setShowModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingKaryawan, setEditingKaryawan] = useState(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [formData, setFormData] = useState({
+    name: '',
+    username: '',
+    password: '',
+    role: 'staff'
+  });
+  const [editFormData, setEditFormData] = useState({
+    name: '',
+    username: '',
+    password: '',
+    role: 'staff'
+  });
+  const [showPassword, setShowPassword] = useState(false);
+  const [showEditPassword, setShowEditPassword] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+
+  // Fetch karyawan dari Supabase
+  const fetchKaryawan = async () => {
+    try {
+      setIsLoading(true);
+      const data = await getAllRecords('users');
+      setKaryawan(data);
+    } catch (err) {
+      console.error('Error fetching karyawan:', err);
+      setError('Gagal memuat data karyawan');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchKaryawan();
+  }, []);
+
+  // Handle input change
+  const handleInputChange = (e) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      [name]: value
+    }));
+    setError('');
+  };
+
+  // Handle edit karyawan
+  const handleEdit = (karyawan) => {
+    setEditingKaryawan(karyawan);
+    setEditFormData({
+      name: karyawan.name,
+      username: karyawan.username,
+      password: '', // Kosongkan password, user bisa mengisi jika ingin mengubah
+      role: karyawan.role
+    });
+    setShowEditModal(true);
+    setError('');
+  };
+
+  // Handle submit edit form
+  const handleEditSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setSuccess('');
+
+    // Validasi
+    if (!editFormData.name.trim() || !editFormData.username.trim()) {
+      setError('Nama dan username harus diisi');
+      return;
+    }
+
+    // Check username sudah ada (kecuali untuk user yang sedang diedit)
+    const existingUser = karyawan.find(k =>
+      k.username.toLowerCase() === editFormData.username.toLowerCase() &&
+      k.id !== editingKaryawan.id
+    );
+    if (existingUser) {
+      setError('Username sudah digunakan');
+      return;
+    }
+
+    // Jika password diisi, validasi panjang
+    if (editFormData.password && editFormData.password.length < 6) {
+      setError('Password minimal 6 karakter');
+      return;
+    }
+
+    try {
+      const updateData = {
+        name: editFormData.name.trim(),
+        username: editFormData.username.trim().toLowerCase(),
+        role: editFormData.role
+      };
+
+      // Hanya update password jika diisi
+      if (editFormData.password.trim()) {
+        updateData.password = editFormData.password;
+      }
+
+      await updateRecord('users', editingKaryawan.id, updateData);
+
+      setSuccess('Karyawan berhasil diperbarui');
+      setShowEditModal(false);
+      setEditingKaryawan(null);
+      setEditFormData({
+        name: '',
+        username: '',
+        password: '',
+        role: 'staff'
+      });
+      fetchKaryawan(); // Refresh list
+
+      // Clear success message after 3 seconds
+      setTimeout(() => setSuccess(''), 3000);
+    } catch (err) {
+      console.error('Error updating user:', err);
+      setError(err.message || 'Gagal memperbarui karyawan');
+    }
+  };
+
+  // Handle submit form
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setSuccess('');
+
+    // Validasi
+    if (!formData.name.trim() || !formData.username.trim() || !formData.password.trim()) {
+      setError('Semua field harus diisi');
+      return;
+    }
+
+    if (formData.password.length < 6) {
+      setError('Password minimal 6 karakter');
+      return;
+    }
+
+    // Check username sudah ada
+    const existingUser = karyawan.find(k => k.username.toLowerCase() === formData.username.toLowerCase());
+    if (existingUser) {
+      setError('Username sudah digunakan');
+      return;
+    }
+
+    try {
+      // Simpan password langsung ke database
+      // Catatan: Untuk keamanan lebih baik, pertimbangkan menggunakan Supabase Auth
+      // atau hash password menggunakan bcrypt sebelum disimpan
+      const newUser = {
+        name: formData.name.trim(),
+        username: formData.username.trim().toLowerCase(),
+        password: formData.password,
+        role: formData.role
+      };
+
+      await createRecord('users', newUser);
+
+      setSuccess('Karyawan berhasil ditambahkan');
+      setFormData({
+        name: '',
+        username: '',
+        password: '',
+        role: 'staff'
+      });
+      setShowModal(false);
+      fetchKaryawan(); // Refresh list
+
+      // Clear success message after 3 seconds
+      setTimeout(() => setSuccess(''), 3000);
+    } catch (err) {
+      console.error('Error creating user:', err);
+      setError(err.message || 'Gagal menambahkan karyawan');
+    }
+  };
+
+  // Handle delete karyawan
+  const handleDelete = async (id, name) => {
+    if (!window.confirm(`Apakah Anda yakin ingin menghapus karyawan "${name}"?`)) {
+      return;
+    }
+
+    try {
+      await deleteRecord('users', id);
+      setSuccess('Karyawan berhasil dihapus');
+      fetchKaryawan(); // Refresh list
+
+      // Clear success message after 3 seconds
+      setTimeout(() => setSuccess(''), 3000);
+    } catch (err) {
+      console.error('Error deleting user:', err);
+      setError(err.message || 'Gagal menghapus karyawan');
+    }
+  };
+
+  // Filter karyawan berdasarkan search term
+  const filteredKaryawan = karyawan.filter(k => {
+    const search = searchTerm.toLowerCase();
+    return (
+      k.name.toLowerCase().includes(search) ||
+      k.username.toLowerCase().includes(search) ||
+      k.role.toLowerCase().includes(search)
+    );
+  });
+
+  // Get role badge color
+  const getRoleBadge = (role) => {
+    const badges = {
+      'administrator': 'bg-red-100 text-red-700',
+      'team_finance': 'bg-blue-100 text-blue-700',
+      'bod': 'bg-purple-100 text-purple-700',
+      'manager': 'bg-green-100 text-green-700',
+      'staff': 'bg-gray-100 text-gray-700',
+      'guest': 'bg-yellow-100 text-yellow-700'
+    };
+    return (
+      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${badges[role] || badges.staff}`}>
+        {role === 'team_finance' ? 'Team Finance' :
+          role === 'bod' ? 'BOD' :
+            role.charAt(0).toUpperCase() + role.slice(1)}
+      </span>
+    );
+  };
+
+  return (
+    <div className="p-6">
+      {/* Header */}
+      <div className="mb-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
+              <Users className="w-7 h-7 text-primary-600" />
+              Manajemen Karyawan
+            </h1>
+            <p className="text-gray-600 mt-1">Kelola data karyawan dan user sistem</p>
+          </div>
+          <button
+            onClick={() => setShowModal(true)}
+            className="flex items-center gap-2 bg-primary-600 text-white px-4 py-2 rounded-lg hover:bg-primary-700 transition-colors"
+          >
+            <UserPlus className="w-5 h-5" />
+            Tambah Karyawan
+          </button>
+        </div>
+      </div>
+
+      {/* Success/Error Messages */}
+      {success && (
+        <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg text-green-700">
+          {success}
+        </div>
+      )}
+      {error && (
+        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
+          {error}
+        </div>
+      )}
+
+      {/* Search Bar */}
+      <div className="mb-6">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+          <input
+            type="text"
+            placeholder="Cari karyawan berdasarkan nama, username, atau role..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+          />
+        </div>
+      </div>
+
+      {/* Table */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+        {isLoading ? (
+          <div className="p-8 text-center text-gray-500">
+            Memuat data karyawan...
+          </div>
+        ) : filteredKaryawan.length === 0 ? (
+          <div className="p-8 text-center text-gray-500">
+            {searchTerm ? 'Tidak ada karyawan yang sesuai dengan pencarian' : 'Belum ada data karyawan'}
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">No</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nama</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Username</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tanggal Dibuat</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Aksi</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {filteredKaryawan.map((k, index) => (
+                  <tr key={k.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{index + 1}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{k.name}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{k.username}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">{getRoleBadge(k.role)}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                      {new Date(k.created_at).toLocaleDateString('id-ID', {
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric'
+                      })}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => handleEdit(k)}
+                          className="text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => handleDelete(k.id, k.name)}
+                          className="text-red-600 hover:text-red-800 font-medium"
+                        >
+                          Hapus
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Modal Tambah Karyawan */}
+      {showModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-6 border-b border-gray-200">
+              <h2 className="text-xl font-bold text-gray-800">Tambah Karyawan Baru</h2>
+              <button
+                onClick={() => {
+                  setShowModal(false);
+                  setFormData({
+                    name: '',
+                    username: '',
+                    password: '',
+                    role: 'staff'
+                  });
+                  setError('');
+                }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmit} className="p-6 space-y-4">
+              {error && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                  {error}
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Nama <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  name="name"
+                  value={formData.name}
+                  onChange={handleInputChange}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  placeholder="Masukkan nama lengkap"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Username <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  name="username"
+                  value={formData.username}
+                  onChange={handleInputChange}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  placeholder="Masukkan username"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Password <span className="text-red-500">*</span>
+                </label>
+                <div className="relative">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    name="password"
+                    value={formData.password}
+                    onChange={handleInputChange}
+                    className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                    placeholder="Minimal 6 karakter"
+                    required
+                    minLength={6}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  >
+                    {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Role <span className="text-red-500">*</span>
+                </label>
+                <select
+                  name="role"
+                  value={formData.role}
+                  onChange={handleInputChange}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  required
+                >
+                  <option value="staff">Staff</option>
+                  <option value="manager">Manager</option>
+                  <option value="team_finance">Team Finance</option>
+                  <option value="bod">BOD</option>
+                  <option value="administrator">Administrator</option>
+                  <option value="guest">Guest</option>
+                </select>
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowModal(false);
+                    setFormData({
+                      name: '',
+                      username: '',
+                      password: '',
+                      role: 'staff'
+                    });
+                    setError('');
+                  }}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
+                >
+                  Simpan
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Edit Karyawan */}
+      {showEditModal && editingKaryawan && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-6 border-b border-gray-200">
+              <h2 className="text-xl font-bold text-gray-800">Edit Karyawan</h2>
+              <button
+                onClick={() => {
+                  setShowEditModal(false);
+                  setEditingKaryawan(null);
+                  setEditFormData({
+                    name: '',
+                    username: '',
+                    password: '',
+                    role: 'staff'
+                  });
+                  setError('');
+                }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            <form onSubmit={handleEditSubmit} className="p-6 space-y-4">
+              {error && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                  {error}
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Nama <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  name="name"
+                  value={editFormData.name}
+                  onChange={(e) => {
+                    const { name, value } = e.target;
+                    setEditFormData(prev => ({
+                      ...prev,
+                      [name]: value
+                    }));
+                    setError('');
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  placeholder="Masukkan nama lengkap"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Username <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  name="username"
+                  value={editFormData.username}
+                  onChange={(e) => {
+                    const { name, value } = e.target;
+                    setEditFormData(prev => ({
+                      ...prev,
+                      [name]: value
+                    }));
+                    setError('');
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  placeholder="Masukkan username"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Password Baru (kosongkan jika tidak ingin mengubah)
+                </label>
+                <div className="relative">
+                  <input
+                    type={showEditPassword ? "text" : "password"}
+                    name="password"
+                    value={editFormData.password}
+                    onChange={(e) => {
+                      const { name, value } = e.target;
+                      setEditFormData(prev => ({
+                        ...prev,
+                        [name]: value
+                      }));
+                      setError('');
+                    }}
+                    className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                    placeholder="Kosongkan jika tidak ingin mengubah"
+                    minLength={6}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowEditPassword(!showEditPassword)}
+                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  >
+                    {showEditPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">Minimal 6 karakter jika ingin mengubah password</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Role <span className="text-red-500">*</span>
+                </label>
+                <select
+                  name="role"
+                  value={editFormData.role}
+                  onChange={(e) => {
+                    const { name, value } = e.target;
+                    setEditFormData(prev => ({
+                      ...prev,
+                      [name]: value
+                    }));
+                    setError('');
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  required
+                >
+                  <option value="staff">Staff</option>
+                  <option value="manager">Manager</option>
+                  <option value="team_finance">Team Finance</option>
+                  <option value="bod">BOD</option>
+                  <option value="administrator">Administrator</option>
+                  <option value="guest">Guest</option>
+                </select>
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowEditModal(false);
+                    setEditingKaryawan(null);
+                    setEditFormData({
+                      name: '',
+                      username: '',
+                      password: '',
+                      role: 'staff'
+                    });
+                    setError('');
+                  }}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
+                >
+                  Simpan Perubahan
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default Karyawan;
+
