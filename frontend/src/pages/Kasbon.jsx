@@ -1,18 +1,22 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Plus, Search, Filter, Download, Eye, X, ChevronLeft, ChevronRight, Banknote, Wallet, FileText, CheckCircle, XCircle, Upload, Trash2, Edit2, Paperclip } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { useNotification } from '../context/NotificationContext';
-import { TIPE_OPTIONS, ID_PERUSAHAAN_OPTIONS } from '../constants/companyTypes';
+import { TIPE_OPTIONS, ID_PERUSAHAAN_OPTIONS, getTipeOptionsByRole, getIdPerusahaanOptionsByRole } from '../constants/companyTypes';
 import TipeBadge from '../components/TipeBadge';
 import IdPerusahaanBadge from '../components/IdPerusahaanBadge';
-import { createRecord, getAllRecords, updateRecord, deleteRecord, bulkDeleteRecords, uploadFile } from '../lib/api';
+import QLInfo from '../components/QLInfo';
+import QLLink from '../components/QLLink';
+import { createRecord, updateRecord, deleteRecord, bulkDeleteRecords, uploadFile, countRecords } from '../lib/api';
+import { usePaginatedTable } from '../hooks/usePaginatedTable';
 import { logActivity } from '../lib/auditLog';
 import ConfirmDialog from '../components/ConfirmDialog';
 import PasteUpload from '../components/PasteUpload';
 import { useRealtimeSubscription } from '../hooks/useRealtimeSubscription';
 import { generateKasbonNumber } from '../utils/generateUniqueNumber';
+import { sendTransferNotification } from '../lib/emailNotifications';
 
 const Kasbon = () => {
   const navigate = useNavigate();
@@ -25,10 +29,16 @@ const Kasbon = () => {
   const isAdmin = userRole?.toLowerCase() === 'administrator';
   // BOD, Team Finance & Admin can edit and delete
   const canEditDelete = ['administrator', 'bod', 'team_finance'].includes(userRole?.toLowerCase());
-  const [searchTerm, setSearchTerm] = useState('');
-  const [filterStatus, setFilterStatus] = useState('all');
-  const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage] = useState(10);
+  const canDelete = ['administrator', 'bod'].includes(userRole?.toLowerCase());
+  const canViewConfidential = ['administrator', 'bod', 'team_finance', 'hrd'].includes(userRole?.toLowerCase());
+
+  // Helper to check if record is locked
+  const isLocked = (record) => {
+    if (isAdmin) return false;
+    return record.statusTransfer === 'Sudah Transfer';
+  };
+  const [filterStatus, setFilterStatusState] = useState('all');
+  const ITEMS_PER_PAGE = 10;
   const [showModal, setShowModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedKasbon, setSelectedKasbon] = useState(null);
@@ -74,115 +84,117 @@ const Kasbon = () => {
     keterangan: '',
   });
 
-  // Data Kasbon dari Supabase
-  const [kasbonRequests, setKasbonRequests] = useState([]);
-  const [isLoadingKasbon, setIsLoadingKasbon] = useState(true);
+  // FIX #1 & #2: pagination + search + filter di server (Supabase .range/.or),
+  // browser hanya menerima 1 halaman (10 row), bukan ribuan row.
+  const transformKasbonRow = useCallback((item) => ({
+    id: item.id,
+    nomorKasbon: item.nomor_kasbon,
+    nomorQl: item.nomor_ql || '',
+    namaEvent: item.nama_event || '',
+    tanggal: item.created_at ? new Date(item.created_at).toISOString().split('T')[0] : '',
+    tipe: item.tipe || '',
+    idPerusahaan: item.id_perusahaan || '',
+    nominal: parseFloat(item.nominal) || 0,
+    statusApproval: item.status_approval || 'Pending',
+    disetujuiOleh: item.nama_approver || '-',
+    statusTransfer: item.status_transfer || 'Belum Transfer',
+    keterangan: item.keterangan || '',
+    buktiTransfer: item.bukti_transfer || null,
+    namaKaryawan: item.nama_karyawan || '',
+    user_id: item.user_id || null,
+    metodePembayaran: item.metode_pembayaran || '',
+    namaBank: item.nama_bank || '',
+    nomorRekening: item.nomor_rekening || '',
+    namaPemilikRekening: item.nama_pemilik_rekening || '',
+    statusPenyelesaian: item.status_penyelesaian || 'Belum Diselesaikan',
+    isConfidential: item.is_confidential || false
+  }), []);
 
-  // Fetch kasbon dari Supabase
-  const fetchKasbon = async () => {
+  const serverFilters = useMemo(() => {
+    if (filterStatus === 'belum-transfer') return { status_transfer: 'Belum Transfer' };
+    if (filterStatus === 'sudah-transfer') return { status_transfer: 'Sudah Transfer' };
+    if (filterStatus === 'belum-penyelesaian') return { status_penyelesaian: 'Belum Diselesaikan' };
+    if (filterStatus === 'sudah-penyelesaian') return { status_penyelesaian: 'Sudah Diselesaikan' };
+    return {};
+  }, [filterStatus]);
+
+  const {
+    items: kasbonRequests,
+    totalCount,
+    totalPages,
+    page: currentPage,
+    setPage: setCurrentPage,
+    search: searchTerm,
+    setSearch: setSearchTerm,
+    setFilters: setServerFilters,
+    loading: isLoadingKasbon,
+    refresh: refreshPage,
+    applyInsert,
+    applyUpdate,
+    applyDelete,
+  } = usePaginatedTable('kasbon', {
+    limit: ITEMS_PER_PAGE,
+    transform: transformKasbonRow,
+  });
+
+  // Terapkan filter status UI ke query server (reset ke halaman 1)
+  useEffect(() => {
+    setServerFilters(serverFilters);
+    setCurrentPage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterStatus]);
+
+  // Statistik kartu via HEAD count (4 request ringan, tanpa download row) — FIX #1.
+  const [kasbonStats, setKasbonStats] = useState({ total: 0, belum: 0, sudah: 0, approved: 0, belumPenyelesaian: 0, sudahPenyelesaian: 0 });
+  const refreshStats = useCallback(async () => {
     try {
-      setIsLoadingKasbon(true);
-      const data = await getAllRecords('kasbon');
-      // Transform data dari Supabase ke format yang digunakan di UI
-      const transformedData = data.map(item => ({
-        id: item.id,
-        nomorKasbon: item.nomor_kasbon,
-        nomorQl: item.nomor_ql || '',
-        tanggal: item.created_at ? new Date(item.created_at).toISOString().split('T')[0] : '',
-        tipe: item.tipe || '',
-        idPerusahaan: item.id_perusahaan || '',
-        nominal: parseFloat(item.nominal) || 0,
-        statusApproval: item.status_approval || 'Pending',
-        disetujuiOleh: item.nama_approver || '-',
-        statusTransfer: item.status_transfer || 'Belum Transfer',
-        keterangan: item.keterangan || '',
-        buktiTransfer: item.bukti_transfer || null,
-        namaKaryawan: item.nama_karyawan || '',
-        metodePembayaran: item.metode_pembayaran || '',
-        namaBank: item.nama_bank || '',
-        nomorRekening: item.nomor_rekening || '',
-        namaPemilikRekening: item.nama_pemilik_rekening || '',
-        statusPenyelesaian: item.status_penyelesaian || 'Belum Diselesaikan'
-      }));
-      setKasbonRequests(transformedData);
-    } catch (error) {
-      console.error('Error fetching kasbon:', error);
-      showToast('Gagal memuat data kasbon', 'error');
-    } finally {
-      setIsLoadingKasbon(false);
+      const [total, belum, sudah, approved, belumPenyelesaian, sudahPenyelesaian] = await Promise.all([
+        countRecords('kasbon'),
+        countRecords('kasbon', { status_transfer: 'Belum Transfer' }),
+        countRecords('kasbon', { status_transfer: 'Sudah Transfer' }),
+        countRecords('kasbon', { status_approval: 'Approved' }),
+        countRecords('kasbon', { status_penyelesaian: 'Belum Diselesaikan' }),
+        countRecords('kasbon', { status_penyelesaian: 'Sudah Diselesaikan' }),
+      ]);
+      setKasbonStats({ total, belum, sudah, approved, belumPenyelesaian, sudahPenyelesaian });
+    } catch (e) {
+      console.error('Error fetching kasbon stats:', e);
     }
-  };
-
-  React.useEffect(() => {
-    fetchKasbon();
   }, []);
 
-  // Realtime subscription for automatic updates
+  useEffect(() => { refreshStats(); }, [refreshStats]);
+
+  const refreshData = useCallback(async () => {
+    await Promise.all([refreshPage(), refreshStats()]);
+  }, [refreshPage, refreshStats]);
+
+  // Realtime: update halaman aktif saja, tanpa refetch full — FIX #3.
   const handleRealtimeChange = useCallback((eventType, newRecord, oldRecord) => {
     if (eventType === 'INSERT') {
-      setKasbonRequests(prev => {
-        const transformed = {
-          id: newRecord.id,
-          nomorKasbon: newRecord.nomor_kasbon,
-          nomorQl: newRecord.nomor_ql || '',
-          tanggal: newRecord.created_at ? new Date(newRecord.created_at).toISOString().split('T')[0] : '',
-          tipe: newRecord.tipe || '',
-          idPerusahaan: newRecord.id_perusahaan || '',
-          nominal: parseFloat(newRecord.nominal) || 0,
-          statusApproval: newRecord.status_approval || 'Pending',
-          disetujuiOleh: newRecord.nama_approver || '-',
-          statusTransfer: newRecord.status_transfer || 'Belum Transfer',
-          keterangan: newRecord.keterangan || '',
-          buktiTransfer: newRecord.bukti_transfer || null,
-          namaKaryawan: newRecord.nama_karyawan || '',
-          metodePembayaran: newRecord.metode_pembayaran || '',
-          namaBank: newRecord.nama_bank || '',
-          nomorRekening: newRecord.nomor_rekening || '',
-          namaPemilikRekening: newRecord.nama_pemilik_rekening || ''
-        };
-        return [transformed, ...prev];
-      });
+      applyInsert(transformKasbonRow(newRecord));
+      refreshStats();
       showToast('Data kasbon baru ditambahkan', 'info');
     } else if (eventType === 'UPDATE') {
-      setKasbonRequests(prev => prev.map(item => {
-        if (item.id === newRecord.id) {
-          return {
-            ...item,
-            nomorKasbon: newRecord.nomor_kasbon,
-            nomorQl: newRecord.nomor_ql || '',
-            tipe: newRecord.tipe || '',
-            idPerusahaan: newRecord.id_perusahaan || '',
-            nominal: parseFloat(newRecord.nominal) || 0,
-            statusApproval: newRecord.status_approval || 'Pending',
-            disetujuiOleh: newRecord.nama_approver || '-',
-            statusTransfer: newRecord.status_transfer || 'Belum Transfer',
-            keterangan: newRecord.keterangan || '',
-            buktiTransfer: newRecord.bukti_transfer || null,
-            namaKaryawan: newRecord.nama_karyawan || '',
-            metodePembayaran: newRecord.metode_pembayaran || '',
-            namaBank: newRecord.nama_bank || '',
-            nomorRekening: newRecord.nomor_rekening || '',
-            namaPemilikRekening: newRecord.nama_pemilik_rekening || ''
-          };
-        }
-        return item;
-      }));
+      const patch = transformKasbonRow(newRecord);
+      applyUpdate(newRecord.id, patch);
+      refreshStats();
       showToast('Data kasbon diperbarui', 'info');
     } else if (eventType === 'DELETE') {
-      setKasbonRequests(prev => prev.filter(item => item.id !== oldRecord.id));
+      applyDelete(oldRecord.id);
+      refreshStats();
       showToast('Data kasbon dihapus', 'info');
     }
     refreshNotifications();
-  }, [refreshNotifications, showToast]);
+  }, [applyInsert, applyUpdate, applyDelete, transformKasbonRow, refreshStats, refreshNotifications, showToast]);
 
   useRealtimeSubscription('kasbon', { onAnyChange: handleRealtimeChange });
 
-  // Stats calculation
+  // Stats calculation (dari HEAD count, bukan dari array halaman)
   const stats = [
-    { label: 'Total Kasbon', value: kasbonRequests.length.toString(), color: 'bg-emerald-50 text-emerald-600' },
-    { label: 'Belum Transfer', value: kasbonRequests.filter(kb => kb.statusTransfer === 'Belum Transfer').length.toString(), color: 'bg-amber-50 text-amber-600' },
-    { label: 'Sudah Transfer', value: kasbonRequests.filter(kb => kb.statusTransfer === 'Sudah Transfer').length.toString(), color: 'bg-emerald-50 text-emerald-600' },
-    { label: 'Approved', value: kasbonRequests.filter(kb => kb.statusApproval === 'Approved').length.toString(), color: 'bg-blue-50 text-blue-600' },
+    { label: 'Total Kasbon', value: kasbonStats.total.toString(), color: 'bg-emerald-50 text-emerald-600' },
+    { label: 'Belum Transfer', value: kasbonStats.belum.toString(), color: 'bg-amber-50 text-amber-600' },
+    { label: 'Sudah Transfer', value: kasbonStats.sudah.toString(), color: 'bg-emerald-50 text-emerald-600' },
+    { label: 'Approved', value: kasbonStats.approved.toString(), color: 'bg-blue-50 text-blue-600' },
   ];
 
   const getStatusApprovalBadge = (status) => {
@@ -283,11 +295,12 @@ const Kasbon = () => {
         nomor_rekening: formData.nomorRekening || null,
         nama_pemilik_rekening: formData.namaPemilikRekening || null,
         keterangan: formData.keterangan || null,
-        nama_karyawan: isGuest ? formData.namaKaryawan : userName || ''
       };
 
       // Jika editing mode
       if (editingKasbon) {
+        // Saat edit: pertahankan nama karyawan asli, jangan overwrite dengan nama admin
+        kasbonData.nama_karyawan = formData.namaKaryawan || '';
         await updateRecord('kasbon', editingKasbon.id, kasbonData);
 
         // Log activity untuk UPDATE
@@ -306,13 +319,16 @@ const Kasbon = () => {
         showToast('Kasbon berhasil diperbarui', 'success');
       } else {
         // Create new - BOD transactions are auto-approved and confidential
+        // HRD transactions are confidential but need BOD approval
         const isBOD = userRole?.toLowerCase() === 'bod';
+        const isHRD = userRole?.toLowerCase() === 'hrd';
 
+        kasbonData.nama_karyawan = isGuest ? formData.namaKaryawan : userName || '';
         kasbonData.status_approval = isBOD ? 'Approved' : 'Pending';
         kasbonData.status_transfer = 'Belum Transfer';
         kasbonData.disetujui_oleh = isBOD ? userId : null;
         kasbonData.nama_approver = isBOD ? userName : null;
-        kasbonData.is_confidential = isBOD;
+        kasbonData.is_confidential = isBOD || isHRD;
 
         // Generate unique nomor kasbon at submit time to prevent conflicts
         const nomorKasbon = generateKasbonNumber();
@@ -336,7 +352,7 @@ const Kasbon = () => {
         showToast('Kasbon berhasil ditambahkan', 'success');
       }
 
-      await fetchKasbon(); // Refresh data
+      await refreshData(); // Refresh halaman aktif + statistik (paginated)
       setShowModal(false);
       setEditingKasbon(null);
       // Reset form
@@ -370,6 +386,7 @@ const Kasbon = () => {
     setEditingKasbon(kasbon);
     setFormData({
       nomorQl: kasbon.nomorQl || '',
+      namaEvent: kasbon.namaEvent || '',
       tipe: kasbon.tipe || '',
       idPerusahaan: kasbon.idPerusahaan || '',
       namaKaryawan: kasbon.namaKaryawan || '',
@@ -406,7 +423,7 @@ const Kasbon = () => {
             changedByName: userName
           });
           showToast('Kasbon berhasil dihapus', 'success');
-          await fetchKasbon();
+          await refreshData();
           refreshNotifications();
         } catch (error) {
           console.error('Error deleting kasbon:', error);
@@ -470,7 +487,7 @@ const Kasbon = () => {
 
           showToast(`${selectedItems.length} kasbon berhasil dihapus`, 'success');
           setSelectedItems([]);
-          await fetchKasbon();
+          await refreshData();
           refreshNotifications();
         } catch (error) {
           console.error('Error bulk deleting kasbon:', error);
@@ -509,7 +526,7 @@ const Kasbon = () => {
             changedByName: userName
           });
           showToast('Kasbon berhasil disetujui', 'success');
-          await fetchKasbon();
+          await refreshData();
           refreshNotifications();
         } catch (error) {
           console.error('Error approving kasbon:', error);
@@ -546,7 +563,7 @@ const Kasbon = () => {
             changedByName: userName
           });
           showToast('Kasbon berhasil ditolak', 'success');
-          await fetchKasbon();
+          await refreshData();
           refreshNotifications();
         } catch (error) {
           console.error('Error rejecting kasbon:', error);
@@ -584,8 +601,16 @@ const Kasbon = () => {
                 changedBy: userId,
                 changedByName: userName
               });
+              await sendTransferNotification({
+                tableName: 'kasbon',
+                record: kasbon,
+                amount: kasbon.nominal,
+                proofUrl: '',
+                transferredBy: userName,
+                detailPath: `/kasbon/${kasbon.id}`
+              });
               showToast('Status transfer berhasil diperbarui', 'success');
-              await fetchKasbon();
+              await refreshData();
               refreshNotifications();
             } catch (error) {
               console.error('Error updating transfer status:', error);
@@ -626,7 +651,7 @@ const Kasbon = () => {
               changedByName: userName
             });
             showToast(`Status transfer berhasil diperbarui menjadi ${newStatus}`, 'success');
-            await fetchKasbon();
+            await refreshData();
             refreshNotifications();
           } catch (error) {
             console.error('Error updating transfer status:', error);
@@ -683,12 +708,21 @@ const Kasbon = () => {
         changedByName: userName
       });
 
+      await sendTransferNotification({
+        tableName: 'kasbon',
+        record: transferringKasbon,
+        amount: transferringKasbon.nominal,
+        proofUrl: result.url,
+        transferredBy: userName,
+        detailPath: `/kasbon/${transferringKasbon.id}`
+      });
+
       showToast('Bukti transfer berhasil diupload dan status diperbarui', 'success');
       setShowBuktiTransferModal(false);
       setTransferringKasbon(null);
       setBuktiTransferFile(null);
       setBuktiTransferFileName('');
-      await fetchKasbon();
+      await refreshData();
       refreshNotifications();
     } catch (error) {
       console.error('Error uploading bukti transfer:', error);
@@ -698,42 +732,11 @@ const Kasbon = () => {
     }
   };
 
-  // Filter dan Search
-  const getFilteredAndSearchedData = () => {
-    // Sort by newest first (based on Nomor Kasbon descending)
-    let filtered = [...kasbonRequests].sort((a, b) => {
-      const numA = parseInt(a.nomorKasbon.split('-')[1]) || 0;
-      const numB = parseInt(b.nomorKasbon.split('-')[1]) || 0;
-      return numB - numA;
-    });
-
-    if (filterStatus !== 'all') {
-      if (filterStatus === 'belum-transfer') {
-        filtered = filtered.filter(kb => kb.statusTransfer === 'Belum Transfer');
-      } else if (filterStatus === 'sudah-transfer') {
-        filtered = filtered.filter(kb => kb.statusTransfer === 'Sudah Transfer');
-      }
-    }
-
-    if (searchTerm.trim()) {
-      const term = searchTerm.toLowerCase();
-      filtered = filtered.filter(kb =>
-        kb.nomorKasbon.toLowerCase().includes(term) ||
-        kb.nomorQl.toLowerCase().includes(term) ||
-        kb.namaKaryawan.toLowerCase().includes(term)
-      );
-    }
-
-    return filtered;
-  };
-
-  const filteredKasbonRequests = getFilteredAndSearchedData();
-
-  // Pagination
-  const totalPages = Math.ceil(filteredKasbonRequests.length / itemsPerPage);
-  const indexOfLastItem = currentPage * itemsPerPage;
-  const indexOfFirstItem = indexOfLastItem - itemsPerPage;
-  const currentItems = filteredKasbonRequests.slice(indexOfFirstItem, indexOfLastItem);
+  // Data halaman aktif SUDAH difilter + dicari di server — tidak ada
+  // sort/filter/slice di browser lagi. totalCount/totalPages dari Supabase count.
+  const currentItems = kasbonRequests;
+  const indexOfLastItem = currentPage * ITEMS_PER_PAGE;
+  const indexOfFirstItem = (currentPage - 1) * ITEMS_PER_PAGE;
 
   const handlePageChange = (pageNumber) => {
     setCurrentPage(pageNumber);
@@ -741,13 +744,11 @@ const Kasbon = () => {
   };
 
   const handleFilterChange = (status) => {
-    setFilterStatus(status);
-    setCurrentPage(1);
+    setFilterStatusState(status);
   };
 
   const handleSearchChange = (value) => {
     setSearchTerm(value);
-    setCurrentPage(1);
   };
 
   return (
@@ -797,7 +798,7 @@ const Kasbon = () => {
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
             <input
               type="text"
-              placeholder="Cari berdasarkan Nomor Kasbon, Nomor QL, atau Nama Karyawan..."
+              placeholder="Cari berdasarkan Nomor Kasbon, Nomor QL, Nama Event, atau Nama Karyawan..."
               value={searchTerm}
               onChange={(e) => handleSearchChange(e.target.value)}
               className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
@@ -818,7 +819,7 @@ const Kasbon = () => {
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                   }`}
               >
-                Semua ({kasbonRequests.length})
+                Semua ({kasbonStats.total})
               </button>
               <button
                 onClick={() => handleFilterChange('belum-transfer')}
@@ -827,7 +828,7 @@ const Kasbon = () => {
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                   }`}
               >
-                Belum ({kasbonRequests.filter(kb => kb.statusTransfer === 'Belum Transfer').length})
+                Belum Transfer ({kasbonStats.belum})
               </button>
               <button
                 onClick={() => handleFilterChange('sudah-transfer')}
@@ -836,14 +837,32 @@ const Kasbon = () => {
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                   }`}
               >
-                Sudah ({kasbonRequests.filter(kb => kb.statusTransfer === 'Sudah Transfer').length})
+                Sudah Transfer ({kasbonStats.sudah})
+              </button>
+              <button
+                onClick={() => handleFilterChange('belum-penyelesaian')}
+                className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm font-medium transition-colors ${filterStatus === 'belum-penyelesaian'
+                  ? 'bg-orange-600 text-white shadow-sm'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+              >
+                Belum Penyelesaian ({kasbonStats.belumPenyelesaian})
+              </button>
+              <button
+                onClick={() => handleFilterChange('sudah-penyelesaian')}
+                className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm font-medium transition-colors ${filterStatus === 'sudah-penyelesaian'
+                  ? 'bg-teal-600 text-white shadow-sm'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+              >
+                Sudah Penyelesaian ({kasbonStats.sudahPenyelesaian})
               </button>
             </div>
 
             {(filterStatus !== 'all' || searchTerm) && (
               <button
                 onClick={() => {
-                  setFilterStatus('all');
+                  setFilterStatusState('all');
                   setSearchTerm('');
                 }}
                 className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-300 transition-colors"
@@ -857,13 +876,13 @@ const Kasbon = () => {
           <div className="flex items-center justify-between text-sm">
             <div className="flex items-center gap-4">
               <p className="text-gray-600">
-                Menampilkan <span className="font-semibold text-gray-800">{indexOfFirstItem + 1}</span> - <span className="font-semibold text-gray-800">{Math.min(indexOfLastItem, filteredKasbonRequests.length)}</span> dari <span className="font-semibold text-gray-800">{filteredKasbonRequests.length}</span> kasbon
-                {filteredKasbonRequests.length !== kasbonRequests.length && (
-                  <span className="text-gray-500"> (Total: {kasbonRequests.length})</span>
+                Menampilkan <span className="font-semibold text-gray-800">{totalCount === 0 ? 0 : indexOfFirstItem + 1}</span> - <span className="font-semibold text-gray-800">{Math.min(indexOfLastItem, totalCount)}</span> dari <span className="font-semibold text-gray-800">{totalCount}</span> kasbon
+                {isLoadingKasbon && (
+                  <span className="text-gray-500"> (memuat...)</span>
                 )}
               </p>
-              {/* Bulk Delete Button - Administrator Only */}
-              {canEditDelete && selectedItems.length > 0 && (
+              {/* Bulk Delete Button - Admin & BOD Only */}
+              {canDelete && selectedItems.length > 0 && (
                 <button
                   onClick={handleBulkDelete}
                   disabled={isDeleting}
@@ -905,6 +924,7 @@ const Kasbon = () => {
                     )}
                     <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Nomor Kasbon</th>
                     <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Nomor QL</th>
+                    <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Nama Event</th>
                     <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Tanggal</th>
                     <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Tipe</th>
                     <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">ID Perusahaan</th>
@@ -923,8 +943,10 @@ const Kasbon = () => {
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {currentItems.length > 0 ? (
-                    currentItems.map((kasbon) => (
-                      <tr key={kasbon.nomorKasbon} className={`hover:bg-gray-50 transition-colors ${selectedItems.includes(kasbon.id) ? 'bg-emerald-50' : ''}`}>
+                    currentItems.map((kasbon) => {
+                      const isHidden = kasbon.isConfidential && !canViewConfidential;
+                      return (
+                      <tr key={kasbon.nomorKasbon} className={`hover:bg-gray-50 transition-colors ${isHidden ? 'bg-gray-50' : ''} ${selectedItems.includes(kasbon.id) ? 'bg-emerald-50' : ''}`}>
                         {/* Checkbox column - Administrator Only */}
                         {canEditDelete && (
                           <td className="py-4 px-3 text-center">
@@ -937,85 +959,111 @@ const Kasbon = () => {
                           </td>
                         )}
                         <td className="py-4 px-6">
-                          <span className="text-sm font-bold text-emerald-600">{kasbon.nomorKasbon}</span>
+                          <button
+                            onClick={() => handleDetail(kasbon)}
+                            className="text-sm font-bold text-emerald-600 hover:text-emerald-800 hover:underline cursor-pointer"
+                          >
+                            {kasbon.isConfidential && (
+                              <span className="inline-flex items-center mr-1.5 text-amber-600" title="Confidential">
+                                <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" /></svg>
+                              </span>
+                            )}
+                            {kasbon.nomorKasbon}
+                          </button>
                         </td>
                         <td className="py-4 px-6">
-                          <span className="text-sm text-gray-700">{kasbon.nomorQl}</span>
+                          <QLLink ql={kasbon.nomorQl} hidden={isHidden} className="text-sm text-gray-700" linkClassName="text-emerald-600 font-medium" />
+                        </td>
+                        <td className="py-4 px-6">
+                          <span className="text-sm text-gray-700">{isHidden ? 'CONFIDENTIAL' : (kasbon.namaEvent || '-')}</span>
                         </td>
                         <td className="py-4 px-6">
                           <span className="text-sm text-gray-600">{kasbon.tanggal}</span>
                         </td>
                         <td className="py-4 px-6">
-                          <TipeBadge tipe={kasbon.tipe} size="sm" />
+                          {isHidden ? <span className="text-sm text-gray-400">CONFIDENTIAL</span> : <TipeBadge tipe={kasbon.tipe} size="sm" />}
                         </td>
                         <td className="py-4 px-6">
-                          <IdPerusahaanBadge idPerusahaan={kasbon.idPerusahaan} size="sm" showFullName={true} />
+                          {isHidden ? <span className="text-sm text-gray-400">CONFIDENTIAL</span> : <IdPerusahaanBadge idPerusahaan={kasbon.idPerusahaan} size="sm" showFullName={true} />}
                         </td>
                         <td className="py-4 px-6">
-                          <span className="text-sm text-gray-700 font-medium">{kasbon.namaKaryawan}</span>
+                          <span className="text-sm text-gray-700 font-medium">{isHidden ? 'CONFIDENTIAL' : kasbon.namaKaryawan}</span>
                         </td>
                         <td className="py-4 px-6 text-right">
-                          <span className="text-sm font-semibold text-gray-900">{formatRupiah(kasbon.nominal)}</span>
+                          <span className="text-sm font-semibold text-gray-900">{isHidden ? 'CONFIDENTIAL' : formatRupiah(kasbon.nominal)}</span>
                         </td>
                         <td className="py-4 px-6 text-center">
-                          {kasbon.metodePembayaran === 'Transfer' ? (
-                            <div className="flex items-center justify-center space-x-1">
-                              <Banknote className="w-4 h-4 text-blue-600" />
-                              <span className="text-xs font-medium text-blue-700">Transfer</span>
-                            </div>
+                          {isHidden ? (
+                            <span className="text-xs text-gray-400">CONFIDENTIAL</span>
                           ) : (
-                            <div className="flex items-center justify-center space-x-1">
-                              <Wallet className="w-4 h-4 text-emerald-600" />
-                              <span className="text-xs font-medium text-emerald-700">Cash</span>
-                            </div>
+                            kasbon.metodePembayaran === 'Transfer' ? (
+                              <div className="flex items-center justify-center space-x-1">
+                                <Banknote className="w-4 h-4 text-blue-600" />
+                                <span className="text-xs font-medium text-blue-700">Transfer</span>
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-center space-x-1">
+                                <Wallet className="w-4 h-4 text-emerald-600" />
+                                <span className="text-xs font-medium text-emerald-700">Cash</span>
+                              </div>
+                            )
                           )}
                         </td>
                         <td className="py-4 px-6">
-                          {kasbon.metodePembayaran === 'Transfer' ? (
-                            <div className="space-y-0.5">
-                              <p className="text-xs font-semibold text-gray-800">{kasbon.namaBank}</p>
-                              <p className="text-xs text-gray-600 font-mono">{kasbon.nomorRekening}</p>
-                              <p className="text-xs text-gray-500">{kasbon.namaPemilikRekening}</p>
-                            </div>
+                          {isHidden ? (
+                            <span className="text-xs text-gray-400">CONFIDENTIAL</span>
                           ) : (
-                            <span className="text-xs text-gray-400">-</span>
+                            kasbon.metodePembayaran === 'Transfer' ? (
+                              <div className="space-y-0.5">
+                                <p className="text-xs font-semibold text-gray-800">{kasbon.namaBank}</p>
+                                <p className="text-xs text-gray-600 font-mono">{kasbon.nomorRekening}</p>
+                                <p className="text-xs text-gray-500">{kasbon.namaPemilikRekening}</p>
+                              </div>
+                            ) : (
+                              <span className="text-xs text-gray-400">-</span>
+                            )
                           )}
                         </td>
                         <td className="py-4 px-6">
-                          <span className="text-xs text-gray-600 line-clamp-2" title={kasbon.keterangan}>
-                            {kasbon.keterangan || '-'}
+                          <span className="text-xs text-gray-600 line-clamp-2" title={isHidden ? '' : kasbon.keterangan}>
+                            {isHidden ? '-' : (kasbon.keterangan || '-')}
                           </span>
                         </td>
                         <td className="py-4 px-6 text-center">
-                          {getStatusApprovalBadge(kasbon.statusApproval)}
+                          {isHidden ? <span className="text-xs text-gray-400">CONFIDENTIAL</span> : getStatusApprovalBadge(kasbon.statusApproval)}
                         </td>
                         <td className="py-4 px-6">
-                          <span className="text-sm text-gray-700">{kasbon.disetujuiOleh}</span>
+                          <span className="text-sm text-gray-700">{isHidden ? '***' : kasbon.disetujuiOleh}</span>
                         </td>
                         <td className="py-4 px-6 text-center">
-                          {getStatusTransferBadge(kasbon.statusTransfer)}
+                          {isHidden ? <span className="text-xs text-gray-400">CONFIDENTIAL</span> : getStatusTransferBadge(kasbon.statusTransfer)}
                         </td>
                         <td className="py-4 px-6 text-center">
-                          {getStatusPenyelesaianBadge(kasbon.statusPenyelesaian)}
+                          {isHidden ? <span className="text-xs text-gray-400">CONFIDENTIAL</span> : getStatusPenyelesaianBadge(kasbon.statusPenyelesaian)}
                         </td>
                         <td className="py-4 px-6 text-center">
-                          {kasbon.buktiTransfer ? (
-                            <a
-                              href={kasbon.buktiTransfer}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex items-center justify-center space-x-1 hover:bg-blue-50 p-1 rounded transition-colors"
-                              title="Lihat Bukti Transfer"
-                            >
-                              <Paperclip className="w-4 h-4 text-blue-600" />
-                              <span className="text-xs font-medium text-blue-700">Lihat</span>
-                            </a>
+                          {isHidden ? (
+                            <span className="text-xs text-gray-400">CONFIDENTIAL</span>
                           ) : (
-                            <span className="text-xs text-gray-400">-</span>
+                            kasbon.buktiTransfer ? (
+                              <a
+                                href={kasbon.buktiTransfer}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center justify-center space-x-1 hover:bg-blue-50 p-1 rounded transition-colors"
+                                title="Lihat Bukti Transfer"
+                              >
+                                <Paperclip className="w-4 h-4 text-blue-600" />
+                                <span className="text-xs font-medium text-blue-700">Lihat</span>
+                              </a>
+                            ) : (
+                              <span className="text-xs text-gray-400">-</span>
+                            )
                           )}
                         </td>
                         <td className="py-4 px-6">
                           <div className="flex items-center justify-center gap-2 flex-wrap">
+                            {!isHidden && (
                             <button
                               onClick={() => handleDetail(kasbon)}
                               className="flex items-center space-x-1 px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors text-sm font-medium"
@@ -1023,6 +1071,7 @@ const Kasbon = () => {
                               <Eye className="w-4 h-4" />
                               <span>Detail</span>
                             </button>
+                            )}
 
                             {/* Aksi Approve/Reject untuk Manager/Admin/BOD */}
                             {canManage && kasbon.statusApproval === 'Pending' && (
@@ -1069,7 +1118,7 @@ const Kasbon = () => {
                             )}
 
                             {/* Aksi Edit/Delete untuk Admin dan Manager */}
-                            {canEditDelete && (
+                            {canEditDelete && !isLocked(kasbon) && (
                               <>
                                 <button
                                   onClick={() => handleEdit(kasbon)}
@@ -1079,20 +1128,23 @@ const Kasbon = () => {
                                   <Edit2 className="w-4 h-4" />
                                   <span>Edit</span>
                                 </button>
-                                <button
-                                  onClick={() => handleDelete(kasbon)}
-                                  className="flex items-center space-x-1 px-3 py-1.5 bg-rose-50 text-rose-600 rounded-lg hover:bg-rose-100 transition-colors text-sm font-medium"
-                                  title="Delete"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                  <span>Hapus</span>
-                                </button>
+                                {canDelete && (
+                                  <button
+                                    onClick={() => handleDelete(kasbon)}
+                                    className="flex items-center space-x-1 px-3 py-1.5 bg-rose-50 text-rose-600 rounded-lg hover:bg-rose-100 transition-colors text-sm font-medium"
+                                    title="Delete"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                    <span>Delete</span>
+                                  </button>
+                                )}
                               </>
                             )}
                           </div>
                         </td>
                       </tr>
-                    ))
+                    );
+                  })
                   ) : (
                     <tr>
                       <td colSpan={canEditDelete ? "16" : "15"} className="py-12 text-center">
@@ -1119,7 +1171,7 @@ const Kasbon = () => {
         </div>
 
         {/* Pagination */}
-        {filteredKasbonRequests.length > 0 && totalPages > 1 && (
+        {totalCount > 0 && totalPages > 1 && (
           <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
             <div className="flex items-center justify-between">
               <div className="text-sm text-gray-600">
@@ -1213,7 +1265,7 @@ const Kasbon = () => {
               </div>
 
               <div className="text-sm text-gray-600">
-                {itemsPerPage} per halaman
+                {ITEMS_PER_PAGE} per halaman
               </div>
             </div>
           </div>
@@ -1270,14 +1322,14 @@ const Kasbon = () => {
                       Nomor QL <span className="text-gray-400 text-xs">(Opsional)</span>
                     </label>
                     <input
-                      type="number"
+                      type="text"
                       name="nomorQl"
                       value={formData.nomorQl}
                       onChange={handleInputChange}
-                      placeholder="Contoh: 12345"
-                      min="0"
+                      placeholder="Contoh: PSQL-0080"
                       className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
                     />
+                    <QLInfo value={formData.nomorQl} />
                   </div>
 
                   {/* Nama Event/Project - WAJIB */}
@@ -1352,7 +1404,7 @@ const Kasbon = () => {
                       className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
                     >
                       <option value="">Pilih Tipe Unit Bisnis</option>
-                      {TIPE_OPTIONS.map((tipe) => (
+                      {getTipeOptionsByRole(userRole).map((tipe) => (
                         <option key={tipe.value} value={tipe.value}>
                           {tipe.label}
                         </option>
@@ -1371,7 +1423,7 @@ const Kasbon = () => {
                       className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
                     >
                       <option value="">Pilih ID Perusahaan</option>
-                      {ID_PERUSAHAAN_OPTIONS.map((company) => (
+                      {getIdPerusahaanOptionsByRole(userRole).map((company) => (
                         <option key={company.value} value={company.value}>
                           {company.label}
                         </option>

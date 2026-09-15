@@ -61,6 +61,14 @@ app.use((req, res) => {
     res.status(404).json({ error: 'Endpoint tidak ditemukan' });
 });
 
+// No.9: fail-fast bila JWT_SECRET lemah — sesi tidak boleh ditandatangani asal-asalan
+try {
+    require('./lib/jwt').assertJwtSecret();
+} catch (err) {
+    console.error(err.message);
+    process.exit(1);
+}
+
 // Start server
 app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);

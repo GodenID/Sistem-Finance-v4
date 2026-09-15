@@ -1,13 +1,17 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Printer, FileText, Calendar, User, DollarSign, CheckCircle, XCircle, Wallet, Eye, Download } from 'lucide-react';
-import { getRecordById, updateRecord } from '../lib/api';
+import { ArrowLeft, Printer, FileText, Calendar, User, DollarSign, CheckCircle, XCircle, Wallet, Eye, Download, FileSpreadsheet, Loader2, Upload, X } from 'lucide-react';
+import { getRecordById, updateRecord, uploadFile } from '../lib/api';
 import { logActivity } from '../lib/auditLog';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { useNotification } from '../context/NotificationContext';
 import ConfirmDialog from '../components/ConfirmDialog';
+import PasteUpload from '../components/PasteUpload';
+import QLLink from '../components/QLLink';
 import jsPDF from 'jspdf';
+import { exportPenyelesaianDetailExcel } from '../utils/detailExcelExport';
+import { exportPenyelesaianDetailPdf } from '../utils/detailPdfExport';
 
 const PenyelesaianDetail = () => {
     const { id } = useParams();
@@ -16,8 +20,11 @@ const PenyelesaianDetail = () => {
     const { userRole, userId, userName } = useAuth();
     const { refreshNotifications } = useNotification();
     const isFinance = userRole === 'team_finance';
+    const canManage = ['administrator', 'manager', 'bod'].includes(userRole);
+    const canViewConfidential = ['administrator', 'bod', 'team_finance', 'hrd'].includes(userRole?.toLowerCase());
     const [penyelesaian, setPenyelesaian] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
+    const [isExportingPdf, setIsExportingPdf] = useState(false);
     const [confirmDialog, setConfirmDialog] = useState({
         isOpen: false,
         type: 'warning',
@@ -25,6 +32,11 @@ const PenyelesaianDetail = () => {
         message: '',
         onConfirm: () => { }
     });
+
+    // State untuk upload bukti kekurangan (team_finance)
+    const [showBuktiKekuranganModal, setShowBuktiKekuranganModal] = useState(false);
+    const [buktiKekuranganFile, setBuktiKekuranganFile] = useState(null);
+    const [isUploadingBuktiKekurangan, setIsUploadingBuktiKekurangan] = useState(false);
 
     useEffect(() => {
         const fetchPenyelesaianDetail = async () => {
@@ -95,6 +107,121 @@ const PenyelesaianDetail = () => {
                 }
             }
         });
+    };
+
+    // Handle Approve Penyelesaian
+    const handleApprove = () => {
+        setConfirmDialog({
+            isOpen: true,
+            type: 'success',
+            title: 'Konfirmasi Approval',
+            message: `Apakah Anda yakin ingin menyetujui Penyelesaian "${penyelesaian.nomor_penyelesaian}"?`,
+            onConfirm: async () => {
+                try {
+                    await updateRecord('penyelesaian', penyelesaian.id, {
+                        status_approval: 'Approved',
+                        disetujui_oleh: userId || null,
+                        nama_approver: userName || 'Manager'
+                    });
+                    await logActivity({
+                        tableName: 'penyelesaian',
+                        recordId: penyelesaian.id,
+                        recordNumber: penyelesaian.nomor_penyelesaian,
+                        action: 'approve',
+                        fieldChanged: 'status_approval',
+                        oldValue: 'Pending',
+                        newValue: 'Approved',
+                        changedBy: userId,
+                        changedByName: userName
+                    });
+                    showToast('Penyelesaian berhasil disetujui', 'success');
+                    await refetchPenyelesaian();
+                    refreshNotifications();
+                } catch (error) {
+                    console.error('Error approving penyelesaian:', error);
+                    showToast('Gagal menyetujui Penyelesaian', 'error');
+                }
+            }
+        });
+    };
+
+    // Handle Reject Penyelesaian
+    const handleReject = () => {
+        setConfirmDialog({
+            isOpen: true,
+            type: 'danger',
+            title: 'Konfirmasi Penolakan',
+            message: `Apakah Anda yakin ingin menolak Penyelesaian "${penyelesaian.nomor_penyelesaian}"?`,
+            onConfirm: async () => {
+                try {
+                    await updateRecord('penyelesaian', penyelesaian.id, {
+                        status_approval: 'Rejected',
+                        disetujui_oleh: userId || null,
+                        nama_approver: userName || 'Manager'
+                    });
+                    await logActivity({
+                        tableName: 'penyelesaian',
+                        recordId: penyelesaian.id,
+                        recordNumber: penyelesaian.nomor_penyelesaian,
+                        action: 'reject',
+                        fieldChanged: 'status_approval',
+                        oldValue: 'Pending',
+                        newValue: 'Rejected',
+                        changedBy: userId,
+                        changedByName: userName
+                    });
+                    showToast('Penyelesaian berhasil ditolak', 'success');
+                    await refetchPenyelesaian();
+                    refreshNotifications();
+                } catch (error) {
+                    console.error('Error rejecting penyelesaian:', error);
+                    showToast('Gagal menolak Penyelesaian', 'error');
+                }
+            }
+        });
+    };
+
+    // Handle Upload Bukti Transfer Kekurangan (Finance only)
+    const handleUploadBuktiKekurangan = async () => {
+        if (!penyelesaian || !isFinance || !buktiKekuranganFile) return;
+
+        setIsUploadingBuktiKekurangan(true);
+        try {
+            // Upload file
+            const result = await uploadFile(buktiKekuranganFile, 'penyelesaian', penyelesaian.nomor_penyelesaian);
+
+            // Update record with bukti_kekurangan URL and mark as Selesai
+            await updateRecord('penyelesaian', penyelesaian.id, {
+                bukti_kekurangan: result.url,
+                status_penyelesaian: 'Selesai'
+            });
+
+            // Log activity
+            await logActivity({
+                tableName: 'penyelesaian',
+                recordId: penyelesaian.id,
+                recordNumber: penyelesaian.nomor_penyelesaian,
+                action: 'upload_bukti_kekurangan',
+                fieldChanged: 'bukti_kekurangan, status_penyelesaian',
+                oldValue: 'Belum Selesai',
+                newValue: 'Selesai (Bukti transfer kekurangan diupload)',
+                changedBy: userId,
+                changedByName: userName
+            });
+
+            showToast('Bukti transfer kekurangan berhasil diupload & penyelesaian ditandai selesai', 'success');
+            setShowBuktiKekuranganModal(false);
+            setBuktiKekuranganFile(null);
+            refreshNotifications();
+
+            // Refresh data
+            await refetchPenyelesaian();
+        } catch (error) {
+            console.error('Error uploading bukti kekurangan:', error);
+            showToast('Gagal mengupload bukti transfer kekurangan', 'error');
+        } finally {
+            setIsUploadingBuktiKekurangan(false);
+        }
     };
 
     const handleExportPDF = () => {
@@ -363,6 +490,33 @@ const PenyelesaianDetail = () => {
         doc.save(`Penyelesaian-${penyelesaian.nomor_penyelesaian}.pdf`);
     };
 
+    const handleExportExcel = () => {
+        if (!penyelesaian) return;
+
+        try {
+            exportPenyelesaianDetailExcel(penyelesaian);
+            showToast('Excel detail Penyelesaian berhasil diexport', 'success');
+        } catch (error) {
+            console.error('Error exporting Penyelesaian Excel:', error);
+            showToast('Gagal export Excel Penyelesaian', 'error');
+        }
+    };
+
+    const handleExportPDFModern = async () => {
+        if (!penyelesaian || isExportingPdf) return;
+
+        try {
+            setIsExportingPdf(true);
+            await exportPenyelesaianDetailPdf(penyelesaian);
+            showToast('PDF detail Penyelesaian berhasil diexport', 'success');
+        } catch (error) {
+            console.error('Error exporting Penyelesaian PDF:', error);
+            showToast('Gagal export PDF Penyelesaian', 'error');
+        } finally {
+            setIsExportingPdf(false);
+        }
+    };
+
     if (isLoading) {
         return (
             <div className="min-h-screen flex items-center justify-center">
@@ -384,6 +538,29 @@ const PenyelesaianDetail = () => {
                         className="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700"
                     >
                         Kembali
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+    // Check if user can view confidential data
+    if (penyelesaian.is_confidential && !canViewConfidential) {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-gray-50">
+                <div className="text-center max-w-md mx-auto p-8">
+                    <div className="w-20 h-20 bg-gray-800 rounded-full flex items-center justify-center mx-auto mb-6">
+                        <span className="text-4xl">🔒</span>
+                    </div>
+                    <h2 className="text-2xl font-bold text-gray-800 mb-2">Akses Ditolak</h2>
+                    <p className="text-gray-600 mb-6">
+                        Data ini bersifat <strong>CONFIDENTIAL</strong> dan hanya dapat diakses oleh pihak yang berwenang.
+                    </p>
+                    <button
+                        onClick={() => navigate('/penyelesaian')}
+                        className="px-6 py-3 bg-gray-800 text-white rounded-lg hover:bg-gray-900 transition-colors font-medium"
+                    >
+                        Kembali ke Daftar
                     </button>
                 </div>
             </div>
@@ -436,11 +613,19 @@ const PenyelesaianDetail = () => {
                     </div>
                     <div className="flex items-center space-x-3">
                         <button
-                            onClick={handleExportPDF}
-                            className="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors flex items-center space-x-2"
+                            onClick={handleExportExcel}
+                            className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors flex items-center space-x-2"
                         >
-                            <Download className="w-5 h-5" />
-                            <span className="hidden sm:inline">Export PDF</span>
+                            <FileSpreadsheet className="w-5 h-5" />
+                            <span className="hidden sm:inline">Export Excel</span>
+                        </button>
+                        <button
+                            onClick={handleExportPDFModern}
+                            disabled={isExportingPdf}
+                            className="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors flex items-center space-x-2 disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                            {isExportingPdf ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
+                            <span className="hidden sm:inline">{isExportingPdf ? 'Exporting...' : 'Export PDF'}</span>
                         </button>
                         <button
                             onClick={() => window.print()}
@@ -494,7 +679,7 @@ const PenyelesaianDetail = () => {
                                 </div>
                                 <div>
                                     <label className="text-sm text-gray-500">Nomor QL</label>
-                                    <p className="text-base font-semibold text-gray-800">{penyelesaian.nomor_ql || '-'}</p>
+                                    <p className="text-base font-semibold text-gray-800"><QLLink ql={penyelesaian.nomor_ql} linkClassName="text-amber-600" /></p>
                                 </div>
                                 <div>
                                     <label className="text-sm text-gray-500">Tanggal</label>
@@ -557,6 +742,38 @@ const PenyelesaianDetail = () => {
                                 >
                                     <Eye className="w-4 h-4 mr-2" />
                                     Lihat Lampiran
+                                </a>
+                            </div>
+                        )}
+
+                        {/* Lampiran Bukti Pengembalian ke Finance */}
+                        {penyelesaian.lampiran_pengembalian && (
+                            <div className="card">
+                                <h2 className="text-lg font-bold text-gray-800 mb-4">Lampiran Bukti Pengembalian ke Finance</h2>
+                                <a
+                                    href={penyelesaian.lampiran_pengembalian}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center px-4 py-2 bg-amber-50 text-amber-600 rounded-lg hover:bg-amber-100 transition-colors"
+                                >
+                                    <Eye className="w-4 h-4 mr-2" />
+                                    Lihat Bukti Pengembalian
+                                </a>
+                            </div>
+                        )}
+
+                        {/* Lampiran Bukti Transfer yang Kekurangan */}
+                        {penyelesaian.bukti_kekurangan && (
+                            <div className="card">
+                                <h2 className="text-lg font-bold text-gray-800 mb-4">Lampiran Bukti Transfer yang Kekurangan</h2>
+                                <a
+                                    href={penyelesaian.bukti_kekurangan}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center px-4 py-2 bg-orange-50 text-orange-600 rounded-lg hover:bg-orange-100 transition-colors"
+                                >
+                                    <Eye className="w-4 h-4 mr-2" />
+                                    Lihat Bukti Transfer Kekurangan
                                 </a>
                             </div>
                         )}
@@ -632,12 +849,47 @@ const PenyelesaianDetail = () => {
                                 {/* Tombol Selesai untuk Finance */}
                                 {isFinance && penyelesaian.status_approval === 'Approved' && penyelesaian.status_penyelesaian !== 'Selesai' && (
                                     <div className="pt-3 border-t border-gray-200">
+                                        {penyelesaian.status_selisih === 'Kekurangan' && !penyelesaian.bukti_kekurangan ? (
+                                            <>
+                                                <p className="text-xs text-amber-600 mb-2">
+                                                    Ada kekurangan Rp {formatRupiah(Math.abs(penyelesaian.selisih || 0))} yang perlu ditransfer sebelum menandai selesai
+                                                </p>
+                                                <button
+                                                    onClick={() => setShowBuktiKekuranganModal(true)}
+                                                    className="w-full flex items-center justify-center space-x-2 px-4 py-2.5 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors font-medium"
+                                                >
+                                                    <Upload className="w-5 h-5" />
+                                                    <span>Upload Bukti Transfer Kekurangan</span>
+                                                </button>
+                                            </>
+                                        ) : (
+                                            <button
+                                                onClick={handleMarkSelesai}
+                                                className="w-full flex items-center justify-center space-x-2 px-4 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-medium"
+                                            >
+                                                <CheckCircle className="w-5 h-5" />
+                                                <span>Tandai Selesai</span>
+                                            </button>
+                                        )}
+                                    </div>
+                                )}
+
+                                {/* Tombol Approve/Reject untuk Manager/Admin/BOD */}
+                                {canManage && penyelesaian.status_approval === 'Pending' && (
+                                    <div className="pt-3 border-t border-gray-200 space-y-2">
                                         <button
-                                            onClick={handleMarkSelesai}
-                                            className="w-full flex items-center justify-center space-x-2 px-4 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-medium"
+                                            onClick={handleApprove}
+                                            className="w-full flex items-center justify-center space-x-2 px-4 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium"
                                         >
                                             <CheckCircle className="w-5 h-5" />
-                                            <span>Tandai Selesai</span>
+                                            <span>Approve</span>
+                                        </button>
+                                        <button
+                                            onClick={handleReject}
+                                            className="w-full flex items-center justify-center space-x-2 px-4 py-2.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors font-medium"
+                                        >
+                                            <XCircle className="w-5 h-5" />
+                                            <span>Reject</span>
                                         </button>
                                     </div>
                                 )}
@@ -659,6 +911,109 @@ const PenyelesaianDetail = () => {
                 title={confirmDialog.title}
                 message={confirmDialog.message}
             />
+
+            {/* Modal Upload Bukti Transfer Kekurangan */}
+            {showBuktiKekuranganModal && penyelesaian && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl shadow-xl max-w-md w-full max-h-[90vh] overflow-hidden flex flex-col">
+                        <div className="flex-shrink-0 flex items-center justify-between p-6 border-b border-gray-200 bg-gradient-to-r from-amber-600 to-amber-700 rounded-t-2xl">
+                            <div className="flex items-center space-x-3">
+                                <div className="p-2 bg-white/20 rounded-lg">
+                                    <Upload className="w-6 h-6 text-white" />
+                                </div>
+                                <div>
+                                    <h3 className="text-lg font-bold text-white">Upload Bukti Transfer Kekurangan</h3>
+                                    <p className="text-sm text-white/80">{penyelesaian.nomor_penyelesaian}</p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => {
+                                    setShowBuktiKekuranganModal(false);
+                                    setBuktiKekuranganFile(null);
+                                }}
+                                className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                            >
+                                <X className="w-5 h-5 text-white" />
+                            </button>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                            {/* Info Penyelesaian */}
+                            <div className="bg-gray-50 rounded-lg p-4">
+                                <div className="grid grid-cols-2 gap-3 text-sm">
+                                    <div>
+                                        <span className="text-gray-500">Karyawan:</span>
+                                        <p className="font-medium text-gray-800">{penyelesaian.nama_karyawan || '-'}</p>
+                                    </div>
+                                    <div>
+                                        <span className="text-gray-500">Nominal Kekurangan:</span>
+                                        <p className="font-semibold text-amber-600">Rp {formatRupiah(Math.abs(penyelesaian.selisih || 0))}</p>
+                                    </div>
+                                    <div>
+                                        <span className="text-gray-500">Kasbon:</span>
+                                        <p className="font-medium text-gray-800">Rp {formatRupiah(penyelesaian.kasbon_nominal || 0)}</p>
+                                    </div>
+                                    <div>
+                                        <span className="text-gray-500">Total Pengeluaran:</span>
+                                        <p className="font-medium text-gray-800">Rp {formatRupiah(penyelesaian.total_pengeluaran || 0)}</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Info Kekurangan */}
+                            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                                <p className="text-sm text-amber-800">
+                                    Karyawan mengeluarkan lebih dari kasbon yang diberikan. Silakan transfer kekurangan sebesar <strong>Rp {formatRupiah(Math.abs(penyelesaian.selisih || 0))}</strong> dan upload bukti transfernya untuk menandai penyelesaian ini selesai.
+                                </p>
+                            </div>
+
+                            {/* Upload Area */}
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                    Lampiran Bukti Transfer yang Kekurangan <span className="text-red-500">*</span>
+                                </label>
+                                <PasteUpload
+                                    onFileSelect={(file) => setBuktiKekuranganFile(file)}
+                                    accept=".pdf,.jpg,.jpeg,.png"
+                                    maxSize={10}
+                                />
+                            </div>
+
+                            {/* Buttons */}
+                            <div className="flex items-center justify-end space-x-3 pt-4 border-t border-gray-200">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setShowBuktiKekuranganModal(false);
+                                        setBuktiKekuranganFile(null);
+                                    }}
+                                    disabled={isUploadingBuktiKekurangan}
+                                    className="px-6 py-2.5 border border-gray-200 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition-colors disabled:opacity-50"
+                                >
+                                    Batal
+                                </button>
+                                <button
+                                    onClick={handleUploadBuktiKekurangan}
+                                    disabled={!buktiKekuranganFile || isUploadingBuktiKekurangan}
+                                    className={`px-6 py-2.5 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700 transition-colors shadow-sm flex items-center space-x-2 ${(!buktiKekuranganFile || isUploadingBuktiKekurangan) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                >
+                                    {isUploadingBuktiKekurangan ? (
+                                        <>
+                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                            <span>Mengupload...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <CheckCircle className="w-4 h-4" />
+                                            <span>Upload & Tandai Selesai</span>
+                                        </>
+                                    )}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
         </>
     );
 };

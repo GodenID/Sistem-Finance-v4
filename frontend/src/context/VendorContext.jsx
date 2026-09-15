@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { getAllRecords, createRecord, updateRecord, deleteRecord } from '../lib/api';
+import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
+import { getAllRecords, createRecord, updateRecord, deleteRecord, cachedQuery, invalidateCache } from '../lib/api';
 
 const VendorContext = createContext();
 
@@ -75,14 +75,17 @@ export const VendorProvider = ({ children }) => {
   const [isLoading, setIsLoading] = useState(true);
 
   // Fetch vendors from Supabase on mount
+  // FIX #6: hasil di-cache 60 dtk — pindah halaman tidak fetch ulang.
   useEffect(() => {
     fetchVendors();
   }, []);
 
-  const fetchVendors = async () => {
+  const fetchVendors = useCallback(async () => {
     try {
       setIsLoading(true);
-      const data = await getAllRecords('vendors', { status: 'active' });
+      const data = await cachedQuery('vendors:active', 60000, () =>
+        getAllRecords('vendors', { status: 'active' })
+      );
 
       // Transform data to match frontend format
       const transformedData = data.map(vendor => ({
@@ -107,10 +110,10 @@ export const VendorProvider = ({ children }) => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
   // Add new vendor
-  const addVendor = async (vendorData) => {
+  const addVendor = useCallback(async (vendorData) => {
     try {
       // Validasi nomor rekening sudah ada
       const existingVendor = vendors.find(v =>
@@ -131,6 +134,7 @@ export const VendorProvider = ({ children }) => {
       };
 
       const newVendor = await createRecord('vendors', supabaseData);
+      invalidateCache('vendors'); // cache usang -> fetch segar berikutnya
 
       // Transform back to frontend format
       const transformedVendor = {
@@ -149,10 +153,10 @@ export const VendorProvider = ({ children }) => {
       // Re-throw error untuk ditangani di component
       throw error;
     }
-  };
+  }, [vendors]);
 
   // Update vendor
-  const updateVendor = async (id, vendorData) => {
+  const updateVendor = useCallback(async (id, vendorData) => {
     try {
       // Validasi nomor rekening jika berubah
       if (vendorData.nomorRekening) {
@@ -177,6 +181,7 @@ export const VendorProvider = ({ children }) => {
       };
 
       const updatedVendor = await updateRecord('vendors', id, supabaseData);
+      invalidateCache('vendors');
 
       // Transform back to frontend format
       const transformedVendor = {
@@ -195,32 +200,34 @@ export const VendorProvider = ({ children }) => {
       console.error('Error updating vendor:', error);
       throw error;
     }
-  };
+  }, [vendors]);
 
   // Delete vendor
-  const deleteVendor = async (id) => {
+  const deleteVendor = useCallback(async (id) => {
     try {
       await deleteRecord('vendors', id);
+      invalidateCache('vendors');
       setVendors(vendors.filter(vendor => vendor.id !== id));
     } catch (error) {
       console.error('Error deleting vendor:', error);
       // Fallback: delete from local state
       setVendors(vendors.filter(vendor => vendor.id !== id));
     }
-  };
+  }, [vendors]);
 
   // Get vendor by id
-  const getVendorById = (id) => {
+  // FIX: useCallback agar stabil (dipakai sebagai dep transform di halaman PR).
+  const getVendorById = useCallback((id) => {
     return vendors.find(vendor => vendor.id === id);
-  };
+  }, [vendors]);
 
   // Get active vendors
-  const getActiveVendors = () => {
+  const getActiveVendors = useCallback(() => {
     return vendors.filter(vendor => vendor.status === 'active');
-  };
+  }, [vendors]);
 
   // Search vendors (by nama, nomor rekening, or nama pemilik rekening)
-  const searchVendors = (searchTerm) => {
+  const searchVendors = useCallback((searchTerm) => {
     if (!searchTerm) return [];
     const term = searchTerm.toLowerCase();
     return vendors.filter(vendor =>
@@ -230,9 +237,9 @@ export const VendorProvider = ({ children }) => {
         (vendor.namaPemilikRekening && vendor.namaPemilikRekening.toLowerCase().includes(term))
       )
     );
-  };
+  }, [vendors]);
 
-  const value = {
+  const value = useMemo(() => ({
     vendors,
     isLoading,
     addVendor,
@@ -242,7 +249,7 @@ export const VendorProvider = ({ children }) => {
     getActiveVendors,
     searchVendors,
     refreshVendors: fetchVendors
-  };
+  }), [vendors, isLoading, addVendor, updateVendor, deleteVendor, getVendorById, getActiveVendors, searchVendors, fetchVendors]);
 
   return (
     <VendorContext.Provider value={value}>

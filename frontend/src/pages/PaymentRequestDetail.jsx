@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Download, Printer, FileText, Calendar, User, Building2, DollarSign, CheckCircle, XCircle, Eye, Loader2, Upload, X } from 'lucide-react';
+import { ArrowLeft, Download, FileSpreadsheet, Printer, FileText, Calendar, User, Building2, DollarSign, CheckCircle, XCircle, Eye, Loader2, Upload, X, Briefcase } from 'lucide-react';
 import { getRecordById, updateRecord, uploadFile } from '../lib/api';
 import { useVendor } from '../context/VendorContext';
 import { useToast } from '../context/ToastContext';
@@ -9,8 +9,12 @@ import { useNotification } from '../context/NotificationContext';
 import { logActivity } from '../lib/auditLog';
 import TipeBadge from '../components/TipeBadge';
 import IdPerusahaanBadge from '../components/IdPerusahaanBadge';
+import QLLink from '../components/QLLink';
 import ConfirmModal from '../components/ConfirmModal';
 import PasteUpload from '../components/PasteUpload';
+import { sendTransferNotification } from '../lib/emailNotifications';
+import { exportPaymentRequestDetailExcel } from '../utils/detailExcelExport';
+import { exportPaymentRequestDetailPdf } from '../utils/detailPdfExport';
 
 import jsPDF from 'jspdf';
 
@@ -25,6 +29,7 @@ const PaymentRequestDetail = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isApproving, setIsApproving] = useState(false);
   const [confirmModal, setConfirmModal] = useState({ isOpen: false, type: null });
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
 
   // Transfer states for team_finance
   const [showTransferModal, setShowTransferModal] = useState(false);
@@ -34,7 +39,7 @@ const PaymentRequestDetail = () => {
   // Check if user can approve
   const canApprove = ['administrator', 'bod', 'manager'].includes(userRole);
   const canTransfer = userRole === 'team_finance';
-  const canViewConfidential = ['administrator', 'bod', 'team_finance'].includes(userRole?.toLowerCase());
+  const canViewConfidential = ['administrator', 'bod', 'team_finance', 'hrd'].includes(userRole?.toLowerCase());
 
 
   useEffect(() => {
@@ -172,6 +177,15 @@ const PaymentRequestDetail = () => {
         changedByName: userName
       });
 
+      await sendTransferNotification({
+        tableName: 'payment_requests',
+        record: pr,
+        amount: pr.nominal,
+        proofUrl: result.url,
+        transferredBy: userName,
+        detailPath: `/payment-request/${pr.id}`
+      });
+
       showToast('Bukti transfer berhasil diupload', 'success');
       setShowTransferModal(false);
       setBuktiTransferFile(null);
@@ -295,11 +309,29 @@ const PaymentRequestDetail = () => {
     addField('Nama Karyawan', pr.nama_karyawan || '-');
     addField('Tipe', pr.tipe || '-');
     addField('ID Perusahaan', pr.id_perusahaan || '-');
+    addField('Nama Event/Project', pr.nama_event || '-');
 
     yPos += 5;
 
-    // Section: Informasi Vendor
-    if (vendorInfo) {
+    // Section: Informasi Vendor atau Virtual Account
+    if (pr.metode_pembayaran === 'Virtual Account') {
+      // Virtual Account Section
+      doc.setFontSize(14);
+      doc.setFont(undefined, 'bold');
+      doc.setTextColor(147, 51, 234); // Purple
+      doc.text('INFORMASI VIRTUAL ACCOUNT', margin, yPos);
+      doc.setDrawColor(147, 51, 234);
+      doc.line(margin, yPos + 2, pageWidth - margin, yPos + 2);
+
+      yPos += 10;
+      doc.setTextColor(0, 0, 0);
+      doc.setFontSize(10);
+
+      addField('Nomor Virtual Account', pr.virtual_account_number || '-');
+      addField('Nama Virtual Account', pr.virtual_account_name || '-');
+
+      yPos += 5;
+    } else if (vendorInfo) {
       doc.setFontSize(14);
       doc.setFont(undefined, 'bold');
       doc.setTextColor(...primaryColor);
@@ -386,6 +418,41 @@ const PaymentRequestDetail = () => {
     doc.text(`Halaman 1 dari 1`, pageWidth - margin, footerY + 5, { align: 'right' });
 
     doc.save(`Payment-Request-${pr.nomor_pr}.pdf`);
+  };
+
+  const handleExportExcel = () => {
+    if (!pr) return;
+
+    try {
+      const selectedVendorInfo = (pr.vendor_id || pr.id_vendor)
+        ? getVendorById(pr.vendor_id || pr.id_vendor)
+        : null;
+
+      exportPaymentRequestDetailExcel(pr, selectedVendorInfo);
+      showToast('Excel detail Payment Request berhasil diexport', 'success');
+    } catch (error) {
+      console.error('Error exporting Payment Request Excel:', error);
+      showToast('Gagal export Excel Payment Request', 'error');
+    }
+  };
+
+  const handleExportPDFModern = async () => {
+    if (!pr || isExportingPdf) return;
+
+    try {
+      setIsExportingPdf(true);
+      const selectedVendorInfo = (pr.vendor_id || pr.id_vendor)
+        ? getVendorById(pr.vendor_id || pr.id_vendor)
+        : null;
+
+      await exportPaymentRequestDetailPdf(pr, selectedVendorInfo);
+      showToast('PDF detail Payment Request berhasil diexport', 'success');
+    } catch (error) {
+      console.error('Error exporting Payment Request PDF:', error);
+      showToast('Gagal export PDF Payment Request', 'error');
+    } finally {
+      setIsExportingPdf(false);
+    }
   };
 
   if (isLoading) {
@@ -499,11 +566,19 @@ const PaymentRequestDetail = () => {
               <span className="hidden sm:inline">Print</span>
             </button>
             <button
-              onClick={handleExportPDF}
-              className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors flex items-center space-x-2"
+              onClick={handleExportExcel}
+              className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors flex items-center space-x-2"
             >
-              <Download className="w-5 h-5" />
-              <span className="hidden sm:inline">Export PDF</span>
+              <FileSpreadsheet className="w-5 h-5" />
+              <span className="hidden sm:inline">Export Excel</span>
+            </button>
+            <button
+              onClick={handleExportPDFModern}
+              disabled={isExportingPdf}
+              className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors flex items-center space-x-2 disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {isExportingPdf ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
+              <span className="hidden sm:inline">{isExportingPdf ? 'Exporting...' : 'Export PDF'}</span>
             </button>
           </div>
         </div>
@@ -523,7 +598,7 @@ const PaymentRequestDetail = () => {
               </div>
               <div>
                 <p className="text-sm text-gray-600">Nomor QL</p>
-                <p className="text-lg font-bold text-gray-800">{pr.nomor_ql || '-'}</p>
+                <p className="text-lg font-bold text-gray-800"><QLLink ql={pr.nomor_ql} linkClassName="text-blue-600" /></p>
               </div>
             </div>
           </div>
@@ -546,7 +621,7 @@ const PaymentRequestDetail = () => {
                 </div>
                 <div>
                   <label className="text-sm text-gray-500">Nomor QL</label>
-                  <p className="text-base font-semibold text-gray-800">{pr.nomor_ql || '-'}</p>
+                  <p className="text-base font-semibold text-gray-800"><QLLink ql={pr.nomor_ql} linkClassName="text-blue-600" /></p>
                 </div>
                 <div>
                   <label className="text-sm text-gray-500">Tanggal</label>
@@ -574,11 +649,18 @@ const PaymentRequestDetail = () => {
                     <IdPerusahaanBadge idPerusahaan={pr.id_perusahaan} />
                   </div>
                 </div>
+                <div className="sm:col-span-2">
+                  <label className="text-sm text-gray-500">Nama Event/Project</label>
+                  <p className="text-base text-gray-800 flex items-center space-x-2 mt-1">
+                    <Briefcase className="w-4 h-4 text-gray-400" />
+                    <span>{pr.nama_event || '-'}</span>
+                  </p>
+                </div>
               </div>
             </div>
 
-            {/* Vendor Info Card */}
-            {vendorInfo && (
+            {/* Vendor Info Card - shown for Transfer Rekening */}
+            {vendorInfo && pr.metode_pembayaran !== 'Virtual Account' && (
               <div className="card">
                 <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center space-x-2">
                   <Building2 className="w-5 h-5 text-primary-600" />
@@ -609,6 +691,27 @@ const PaymentRequestDetail = () => {
               </div>
             )}
 
+            {/* Virtual Account Info Card - shown for Virtual Account */}
+            {pr.metode_pembayaran === 'Virtual Account' && (
+              <div className="card">
+                <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center space-x-2">
+                  <Building2 className="w-5 h-5 text-purple-600" />
+                  <span>Informasi Virtual Account</span>
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-700">VA</span>
+                </h2>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-sm text-gray-500">Nomor Virtual Account</label>
+                    <p className="text-base font-mono font-semibold text-gray-800">{pr.virtual_account_number || '-'}</p>
+                  </div>
+                  <div>
+                    <label className="text-sm text-gray-500">Nama Virtual Account</label>
+                    <p className="text-base font-semibold text-gray-800">{pr.virtual_account_name || '-'}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Keterangan */}
             {pr.keterangan && (
               <div className="card">
@@ -621,17 +724,43 @@ const PaymentRequestDetail = () => {
             {pr.lampiran && (
               <div className="card">
                 <h2 className="text-lg font-bold text-gray-800 mb-4">Lampiran</h2>
-                <a
-                  href={pr.lampiran}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center px-4 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors"
-                >
-                  <Eye className="w-4 h-4 mr-2" />
-                  Lihat Lampiran
-                </a>
+                {(() => {
+                  // Parse lampiran - could be JSON array or single URL string
+                  let lampiranList = [];
+                  try {
+                    if (typeof pr.lampiran === 'string') {
+                      if (pr.lampiran.startsWith('[')) {
+                        lampiranList = JSON.parse(pr.lampiran);
+                      } else {
+                        lampiranList = [pr.lampiran];
+                      }
+                    } else if (Array.isArray(pr.lampiran)) {
+                      lampiranList = pr.lampiran;
+                    }
+                  } catch (e) {
+                    lampiranList = [pr.lampiran];
+                  }
+
+                  return (
+                    <div className="space-y-2">
+                      {lampiranList.map((url, index) => (
+                        <a
+                          key={index}
+                          href={url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center px-4 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors"
+                        >
+                          <Eye className="w-4 h-4 mr-2" />
+                          <span className="truncate">Lampiran {lampiranList.length > 1 ? index + 1 : ''}</span>
+                        </a>
+                      ))}
+                    </div>
+                  );
+                })()}
               </div>
             )}
+
           </div>
 
           {/* Sidebar */}

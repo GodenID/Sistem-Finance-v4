@@ -1,17 +1,30 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { User, Menu, LogOut, ChevronDown, Bell, CreditCard, Wallet, FileText, RefreshCw, CheckCircle } from 'lucide-react';
+import { User, Menu, LogOut, ChevronDown, Bell, CreditCard, Wallet, FileText, RefreshCw, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { useNotification } from '../context/NotificationContext';
+import { checkSupabaseHealth } from '../lib/api';
 
 const Header = ({ toggleSidebar }) => {
   const navigate = useNavigate();
-  const { userName, userRole, logout } = useAuth();
+  const { userName, userRole, userStatus, logout } = useAuth();
   const { showToast } = useToast();
   const { notifications, notificationCount, isLoading, refreshNotifications, dismissNotification, isDismissable } = useNotification();
   const [showDropdown, setShowDropdown] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [health, setHealth] = useState({ status: 'checking', latency: null });
+  const [showHealthTooltip, setShowHealthTooltip] = useState(false);
+
+  useEffect(() => {
+    const checkHealth = async () => {
+      const result = await checkSupabaseHealth();
+      setHealth(result);
+    };
+    checkHealth();
+    const interval = setInterval(checkHealth, 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Format role untuk ditampilkan
   const getRoleDisplay = (role) => {
@@ -78,6 +91,59 @@ const Header = ({ toggleSidebar }) => {
           >
             <Menu className="w-5 h-5 text-gray-600" />
           </button>
+
+          {/* Health Status */}
+          <div
+            className="relative"
+            onMouseEnter={() => setShowHealthTooltip(true)}
+            onMouseLeave={() => setShowHealthTooltip(false)}
+          >
+            <button
+              onClick={async () => {
+                setHealth({ status: 'checking', latency: null });
+                const result = await checkSupabaseHealth();
+                setHealth(result);
+              }}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg hover:bg-gray-100 transition-colors"
+              title="Klik untuk refresh status"
+            >
+              {health.status === 'checking' ? (
+                <Loader2 className="w-3.5 h-3.5 text-gray-400 animate-spin" />
+              ) : health.status === 'up' ? (
+                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              ) : (
+                <div className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+              )}
+              <span className="text-xs font-medium text-gray-500 hidden sm:inline">
+                {health.status === 'checking' ? 'Checking...' : health.status === 'up' ? 'Online' : 'Offline'}
+              </span>
+            </button>
+
+            {/* Tooltip */}
+            {showHealthTooltip && (
+              <div className="absolute left-0 top-full mt-2 w-52 bg-white rounded-xl shadow-lg border border-gray-100 p-3 z-50">
+                <div className="flex items-center gap-2 mb-2">
+                  {health.status === 'up' ? (
+                    <CheckCircle className="w-4 h-4 text-emerald-500" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-500" />
+                  )}
+                  <span className="text-sm font-semibold text-gray-800">
+                    {health.status === 'up' ? 'Server Online' : 'Server Offline'}
+                  </span>
+                </div>
+                {health.latency !== null && (
+                  <p className="text-xs text-gray-500">
+                    Latency: <span className="font-medium text-gray-700">{health.latency}ms</span>
+                  </p>
+                )}
+                {health.error && (
+                  <p className="text-xs text-rose-500 mt-1">{health.error}</p>
+                )}
+                <p className="text-xs text-gray-400 mt-2">Supabase Database</p>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Right side */}
@@ -189,7 +255,10 @@ const Header = ({ toggleSidebar }) => {
             >
               <div className="text-right hidden md:block">
                 <p className="text-sm font-semibold text-gray-700">{userName || 'Admin Prasasti'}</p>
-                <p className="text-xs text-gray-500">{getRoleDisplay(userRole)}</p>
+                <p className="text-xs text-gray-500">
+                  {getRoleDisplay(userRole)}
+                  {userStatus === 'suspended' && <span className="ml-1 text-amber-600">Suspended</span>}
+                </p>
               </div>
               <div className="w-10 h-10 bg-gradient-to-br from-primary-500 to-primary-600 rounded-full flex items-center justify-center">
                 <User className="w-5 h-5 text-white" />
@@ -207,7 +276,10 @@ const Header = ({ toggleSidebar }) => {
                 <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-lg border border-gray-100 py-2 z-20">
                   <div className="px-4 py-3 border-b border-gray-100">
                     <p className="text-sm font-semibold text-gray-800">{userName || 'Admin Prasasti'}</p>
-                    <p className="text-xs text-gray-500">{getRoleDisplay(userRole)}</p>
+                    <p className="text-xs text-gray-500">
+                      {getRoleDisplay(userRole)}
+                      {userStatus === 'suspended' && <span className="ml-1 text-amber-600">Suspended</span>}
+                    </p>
                   </div>
                   <button
                     onClick={handleLogout}
@@ -227,4 +299,3 @@ const Header = ({ toggleSidebar }) => {
 };
 
 export default Header;
-

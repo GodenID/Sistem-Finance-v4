@@ -10,7 +10,10 @@ CREATE TABLE IF NOT EXISTS users (
     username VARCHAR(50) UNIQUE NOT NULL,
     password VARCHAR(255) NOT NULL,
     name VARCHAR(100) NOT NULL,
-    role VARCHAR(50) NOT NULL CHECK (role IN ('administrator', 'team_finance', 'bod', 'staff', 'manager', 'guest')),
+    email VARCHAR(255),
+    email_notifications_enabled BOOLEAN DEFAULT true,
+    status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'suspended')),
+    role VARCHAR(50) NOT NULL CHECK (role IN ('administrator', 'team_finance', 'bod', 'hrd', 'staff', 'manager', 'guest')),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE
 );
@@ -107,6 +110,7 @@ CREATE TABLE IF NOT EXISTS penyelesaian (
     total_nominal DECIMAL(15, 2) NOT NULL,
     breakdown JSONB,
     keterangan TEXT,
+    is_confidential BOOLEAN DEFAULT false,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE
 );
@@ -122,6 +126,8 @@ CREATE INDEX IF NOT EXISTS idx_klaim_created_at ON klaim(created_at);
 CREATE INDEX IF NOT EXISTS idx_penyelesaian_user ON penyelesaian(user_id);
 CREATE INDEX IF NOT EXISTS idx_penyelesaian_created_at ON penyelesaian(created_at);
 CREATE INDEX IF NOT EXISTS idx_vendors_status ON vendors(status);
+CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);
+CREATE INDEX IF NOT EXISTS idx_users_email_notifications_enabled ON users(email_notifications_enabled);
 
 -- Row Level Security (RLS) Policies
 -- Enable RLS on all tables

@@ -74,6 +74,11 @@ const Sidebar = ({ isOpen, setIsOpen }) => {
     menuItems.push({ icon: HardDrive, label: 'Backup', path: '/backup' });
   }
 
+  // Tambahkan menu Maintenance hanya untuk administrator
+  if (canAccessKaryawan) {
+    menuItems.push({ icon: Wrench, label: 'Maintenance', path: '/maintenance' });
+  }
+
   // Tambahkan menu Performance hanya untuk administrator
   if (canAccessKaryawan) {
     menuItems.push({ icon: Activity, label: 'Performance', path: '/performance' });

@@ -1,23 +1,26 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Plus, Search, Filter, Eye, X, ChevronLeft, ChevronRight, Banknote, Wallet, FileText, Paperclip, Download } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
-import { TIPE_OPTIONS, ID_PERUSAHAAN_OPTIONS } from '../constants/companyTypes';
+import { TIPE_OPTIONS, ID_PERUSAHAAN_OPTIONS, getTipeOptionsByRole, getIdPerusahaanOptionsByRole } from '../constants/companyTypes';
 import TipeBadge from '../components/TipeBadge';
 import IdPerusahaanBadge from '../components/IdPerusahaanBadge';
+import QLInfo from '../components/QLInfo';
+import QLLink from '../components/QLLink';
 
-import { uploadFile } from '../lib/api';
+import { createRecord, uploadFile, countRecords } from '../lib/api';
+import { usePaginatedTable } from '../hooks/usePaginatedTable';
+import { generateKlaimNumber } from '../utils/generateUniqueNumber';
+import { logActivity } from '../lib/auditLog';
 
 const Klaim = () => {
   const navigate = useNavigate();
-  const { userName, userRole } = useAuth();
+  const { userName, userRole, userId } = useAuth();
   const { showToast } = useToast();
   const isGuest = userRole === 'guest';
-  const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
-  const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage] = useState(10);
+  const ITEMS_PER_PAGE = 10;
   const [showModal, setShowModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedKlaim, setSelectedKlaim] = useState(null);
@@ -44,15 +47,102 @@ const Klaim = () => {
 
 
 
-  // Data Klaim dari Supabase (akan di-fetch nanti)
-  const [klaimRequests, setKlaimRequests] = useState([]);
+  // Pagination + search + filter di server (Supabase .range/.or),
+  // browser hanya menerima 1 halaman (10 row), bukan ribuan row.
+  // Kolom search default SEARCH_COLUMNS.klaim: nomor_klaim, nomor_ql, nama_karyawan, nama_event, keterangan.
+  const transformKlaimRow = useCallback((item) => {
+    let detailPengeluaran = [];
+    if (item.detail_pengeluaran) {
+      try {
+        detailPengeluaran = typeof item.detail_pengeluaran === 'string'
+          ? JSON.parse(item.detail_pengeluaran)
+          : item.detail_pengeluaran;
+        if (!Array.isArray(detailPengeluaran)) detailPengeluaran = [];
+      } catch {
+        detailPengeluaran = [];
+      }
+    }
+    return {
+      id: item.id,
+      nomorKlaim: item.nomor_klaim,
+      nomorQl: item.nomor_ql || '',
+      tanggal: item.created_at ? new Date(item.created_at).toISOString().split('T')[0] : '',
+      tipe: item.tipe || '',
+      idPerusahaan: item.id_perusahaan || '',
+      nominal: parseFloat(item.nominal) || 0,
+      statusApproval: item.status_approval || 'Pending',
+      disetujuiOleh: item.nama_approver || '-',
+      statusTransfer: item.status_transfer || 'Belum Transfer',
+      keterangan: item.keterangan || '',
+      lampiran: item.lampiran || null,
+      buktiTransfer: item.bukti_transfer || null,
+      namaKaryawan: item.nama_karyawan || '',
+      user_id: item.user_id || null,
+      metodePembayaran: item.metode_pembayaran || '',
+      namaBank: item.nama_bank || '',
+      nomorRekening: item.nomor_rekening || '',
+      namaPemilikRekening: item.nama_pemilik_rekening || '',
+      detailPengeluaran
+    };
+  }, []);
 
-  // Stats calculation
+  const serverFilters = useMemo(() => {
+    if (filterStatus === 'belum-transfer') return { status_transfer: 'Belum Transfer' };
+    if (filterStatus === 'sudah-transfer') return { status_transfer: 'Sudah Transfer' };
+    return {};
+  }, [filterStatus]);
+
+  const {
+    items: klaimRequests,
+    totalCount,
+    totalPages,
+    page: currentPage,
+    setPage: setCurrentPage,
+    search: searchTerm,
+    setSearch: setSearchTerm,
+    setFilters: setServerFilters,
+    loading: isLoadingKlaim,
+    refresh: refreshPage,
+  } = usePaginatedTable('klaim', {
+    limit: ITEMS_PER_PAGE,
+    transform: transformKlaimRow,
+  });
+
+  // Terapkan filter status UI ke query server (reset ke halaman 1)
+  useEffect(() => {
+    setServerFilters(serverFilters);
+    setCurrentPage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterStatus]);
+
+  // Statistik kartu via HEAD count (4 request ringan, tanpa download row).
+  const [klaimStats, setKlaimStats] = useState({ total: 0, belum: 0, sudah: 0, approved: 0 });
+  const refreshStats = useCallback(async () => {
+    try {
+      const [total, belum, sudah, approved] = await Promise.all([
+        countRecords('klaim'),
+        countRecords('klaim', { status_transfer: 'Belum Transfer' }),
+        countRecords('klaim', { status_transfer: 'Sudah Transfer' }),
+        countRecords('klaim', { status_approval: 'Approved' }),
+      ]);
+      setKlaimStats({ total, belum, sudah, approved });
+    } catch (e) {
+      console.error('Error fetching klaim stats:', e);
+    }
+  }, []);
+
+  useEffect(() => { refreshStats(); }, [refreshStats]);
+
+  const refreshData = useCallback(async () => {
+    await Promise.all([refreshPage(), refreshStats()]);
+  }, [refreshPage, refreshStats]);
+
+  // Stats calculation (dari HEAD count, bukan dari array halaman)
   const stats = [
-    { label: 'Total Klaim', value: klaimRequests.length.toString(), color: 'bg-violet-50 text-violet-600' },
-    { label: 'Belum Transfer', value: klaimRequests.filter(kl => kl.statusTransfer === 'Belum Transfer').length.toString(), color: 'bg-amber-50 text-amber-600' },
-    { label: 'Sudah Transfer', value: klaimRequests.filter(kl => kl.statusTransfer === 'Sudah Transfer').length.toString(), color: 'bg-emerald-50 text-emerald-600' },
-    { label: 'Approved', value: klaimRequests.filter(kl => kl.statusApproval === 'Approved').length.toString(), color: 'bg-blue-50 text-blue-600' },
+    { label: 'Total Klaim', value: klaimStats.total.toString(), color: 'bg-violet-50 text-violet-600' },
+    { label: 'Belum Transfer', value: klaimStats.belum.toString(), color: 'bg-amber-50 text-amber-600' },
+    { label: 'Sudah Transfer', value: klaimStats.sudah.toString(), color: 'bg-emerald-50 text-emerald-600' },
+    { label: 'Approved', value: klaimStats.approved.toString(), color: 'bg-blue-50 text-blue-600' },
   ];
 
   const getStatusApprovalBadge = (status) => {
@@ -78,18 +168,26 @@ const Klaim = () => {
     return new Intl.NumberFormat('id-ID').format(angka);
   };
 
-  const generateNomorKlaim = () => {
-    if (klaimRequests.length === 0) {
-      return 'KLM-0001';
+  const parseLampiran = (lampiran) => {
+    if (!lampiran) return [];
+    try {
+      const parsed = typeof lampiran === 'string' ? JSON.parse(lampiran) : lampiran;
+      if (Array.isArray(parsed)) return parsed.filter(Boolean);
+      return [parsed];
+    } catch {
+      return [lampiran];
     }
-    // Cari nomor Klaim terbesar dari semua data
-    const maxNumber = klaimRequests.reduce((max, kl) => {
-      const klNumber = parseInt(kl.nomorKlaim.split('-')[1]) || 0;
-      return klNumber > max ? klNumber : max;
-    }, 0);
-    const nextNumber = (maxNumber + 1).toString().padStart(4, '0');
-    return `KLM-${nextNumber}`;
   };
+
+  // Nomor klaim anti-duplikat (tanggal + random), digenerate ulang setiap
+  // modal dibuka dan saat submit — menggantikan hitung max dari array yang
+  // rusak di bawah pagination (hanya 1 halaman yang terlihat).
+  const [generatedNomorKlaim, setGeneratedNomorKlaim] = useState(() => generateKlaimNumber());
+
+  const openCreateModal = useCallback(() => {
+    setGeneratedNomorKlaim(generateKlaimNumber());
+    setShowModal(true);
+  }, []);
 
   const getCurrentDate = () => {
     const today = new Date();
@@ -141,7 +239,7 @@ const Klaim = () => {
       setUploadProgress(0);
 
       try {
-        const nomorKlaim = formData.nomorKlaim || generateNomorKlaim();
+        const nomorKlaim = formData.nomorKlaim || generatedNomorKlaim || generateKlaimNumber();
 
         const progressInterval = setInterval(() => {
           setUploadProgress(prev => {
@@ -266,12 +364,46 @@ const Klaim = () => {
         return;
       }
 
-      // TODO: Simpan ke Supabase
-      // await createRecord('klaim', formData);
+      const namaKaryawanValue = isGuest ? formData.namaKaryawan : userName || '';
 
-      console.log('Submit Klaim:', formData);
+      // Pakai nomor yang ditampilkan di modal (digenerate saat modal dibuka);
+      // siapkan nomor baru untuk pengajuan berikutnya agar tidak dipakai ulang.
+      const nomorKlaimBaru = generatedNomorKlaim || generateKlaimNumber();
+
+      const newKlaimData = {
+        nomor_klaim: nomorKlaimBaru,
+        nomor_ql: formData.nomorQl || null,
+        tipe: formData.tipe,
+        id_perusahaan: formData.idPerusahaan || null,
+        nominal: parseFloat(formData.nominal),
+        metode_pembayaran: formData.metodePembayaran || null,
+        nama_bank: formData.namaBank || null,
+        nomor_rekening: formData.nomorRekening || null,
+        nama_pemilik_rekening: formData.namaPemilikRekening || null,
+        lampiran: formData.lampiran || null,
+        keterangan: formData.keterangan || null,
+        status_approval: 'Approved',
+        status_transfer: 'Belum Transfer',
+        nama_karyawan: namaKaryawanValue,
+        is_confidential: true,
+      };
+
+      const createdKlaim = await createRecord('klaim', newKlaimData);
+
+      await logActivity({
+        tableName: 'klaim',
+        recordId: createdKlaim.id,
+        recordNumber: nomorKlaimBaru,
+        action: 'create',
+        fieldChanged: 'multiple',
+        oldValue: null,
+        newValue: `Nominal: Rp ${parseFloat(formData.nominal).toLocaleString('id-ID')}`,
+        changedBy: userId,
+        changedByName: userName
+      });
+
       setShowModal(false);
-      // Reset form
+      setGeneratedNomorKlaim(generateKlaimNumber()); // siapkan nomor baru berikutnya
       setFormData({
         nomorQl: '',
         tipe: '',
@@ -287,6 +419,7 @@ const Klaim = () => {
       });
       setFileName('');
       showToast('Klaim berhasil ditambahkan', 'success');
+      await refreshData();
     } catch (error) {
       console.error('Error adding klaim:', error);
       showToast('Gagal menambahkan Klaim', 'error');
@@ -298,42 +431,11 @@ const Klaim = () => {
     setShowDetailModal(true);
   };
 
-  // Filter dan Search
-  const getFilteredAndSearchedData = () => {
-    // Sort by newest first (based on Nomor Klaim descending)
-    let filtered = [...klaimRequests].sort((a, b) => {
-      const numA = parseInt(a.nomorKlaim.split('-')[1]) || 0;
-      const numB = parseInt(b.nomorKlaim.split('-')[1]) || 0;
-      return numB - numA;
-    });
-
-    if (filterStatus !== 'all') {
-      if (filterStatus === 'belum-transfer') {
-        filtered = filtered.filter(kl => kl.statusTransfer === 'Belum Transfer');
-      } else if (filterStatus === 'sudah-transfer') {
-        filtered = filtered.filter(kl => kl.statusTransfer === 'Sudah Transfer');
-      }
-    }
-
-    if (searchTerm.trim()) {
-      const term = searchTerm.toLowerCase();
-      filtered = filtered.filter(kl =>
-        kl.nomorKlaim.toLowerCase().includes(term) ||
-        kl.nomorQl.toLowerCase().includes(term) ||
-        kl.namaKaryawan.toLowerCase().includes(term)
-      );
-    }
-
-    return filtered;
-  };
-
-  const filteredKlaimRequests = getFilteredAndSearchedData();
-
-  // Pagination
-  const totalPages = Math.ceil(filteredKlaimRequests.length / itemsPerPage);
-  const indexOfLastItem = currentPage * itemsPerPage;
-  const indexOfFirstItem = indexOfLastItem - itemsPerPage;
-  const currentItems = filteredKlaimRequests.slice(indexOfFirstItem, indexOfLastItem);
+  // Data halaman aktif SUDAH difilter + dicari di server — tidak ada
+  // sort/filter/slice di browser lagi. totalCount/totalPages dari Supabase count.
+  const currentItems = klaimRequests;
+  const indexOfLastItem = currentPage * ITEMS_PER_PAGE;
+  const indexOfFirstItem = (currentPage - 1) * ITEMS_PER_PAGE;
 
   const handlePageChange = (pageNumber) => {
     setCurrentPage(pageNumber);
@@ -342,12 +444,10 @@ const Klaim = () => {
 
   const handleFilterChange = (status) => {
     setFilterStatus(status);
-    setCurrentPage(1);
   };
 
   const handleSearchChange = (value) => {
     setSearchTerm(value);
-    setCurrentPage(1);
   };
 
   return (
@@ -367,7 +467,7 @@ const Klaim = () => {
           </div>
         </div>
         <button
-          onClick={() => setShowModal(true)}
+          onClick={openCreateModal}
           className="flex items-center justify-center space-x-2 px-4 py-2.5 bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-colors shadow-sm text-sm sm:text-base"
         >
           <Plus className="w-4 h-4 sm:w-5 sm:h-5" />
@@ -415,7 +515,7 @@ const Klaim = () => {
                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }`}
             >
-              Semua ({klaimRequests.length})
+              Semua ({klaimStats.total})
             </button>
             <button
               onClick={() => handleFilterChange('belum-transfer')}
@@ -424,7 +524,7 @@ const Klaim = () => {
                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }`}
             >
-              Belum Transfer ({klaimRequests.filter(kl => kl.statusTransfer === 'Belum Transfer').length})
+              Belum Transfer ({klaimStats.belum})
             </button>
             <button
               onClick={() => handleFilterChange('sudah-transfer')}
@@ -433,7 +533,7 @@ const Klaim = () => {
                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }`}
             >
-              Sudah Transfer ({klaimRequests.filter(kl => kl.statusTransfer === 'Sudah Transfer').length})
+              Sudah Transfer ({klaimStats.sudah})
             </button>
 
             {(filterStatus !== 'all' || searchTerm) && (
@@ -452,9 +552,9 @@ const Klaim = () => {
           {/* Result Info */}
           <div className="flex items-center justify-between text-sm">
             <p className="text-gray-600">
-              Menampilkan <span className="font-semibold text-gray-800">{indexOfFirstItem + 1}</span> - <span className="font-semibold text-gray-800">{Math.min(indexOfLastItem, filteredKlaimRequests.length)}</span> dari <span className="font-semibold text-gray-800">{filteredKlaimRequests.length}</span> klaim
-              {filteredKlaimRequests.length !== klaimRequests.length && (
-                <span className="text-gray-500"> (Total: {klaimRequests.length})</span>
+              Menampilkan <span className="font-semibold text-gray-800">{totalCount === 0 ? 0 : indexOfFirstItem + 1}</span> - <span className="font-semibold text-gray-800">{Math.min(indexOfLastItem, totalCount)}</span> dari <span className="font-semibold text-gray-800">{totalCount}</span> klaim
+              {isLoadingKlaim && (
+                <span className="text-gray-500"> (memuat...)</span>
               )}
             </p>
             {searchTerm && (
@@ -500,7 +600,7 @@ const Klaim = () => {
                           <span className="text-sm font-bold text-violet-600">{klaim.nomorKlaim}</span>
                         </td>
                         <td className="py-4 px-6">
-                          <span className="text-sm text-gray-700">{klaim.nomorQl}</span>
+                          <QLLink ql={klaim.nomorQl} className="text-sm text-gray-700" linkClassName="text-violet-600 font-medium" />
                         </td>
                         <td className="py-4 px-6">
                           <span className="text-sm text-gray-600">{klaim.tanggal}</span>
@@ -543,16 +643,29 @@ const Klaim = () => {
                         </td>
                         <td className="py-4 px-6 text-center">
                           {klaim.lampiran ? (
-                            <a
-                              href={klaim.lampiran}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex items-center justify-center space-x-1 hover:bg-emerald-50 p-1 rounded transition-colors"
-                              title="Lihat Lampiran"
-                            >
-                              <Paperclip className="w-4 h-4 text-emerald-600" />
-                              <span className="text-xs font-medium text-emerald-700">Ada</span>
-                            </a>
+                            (() => {
+                              const urls = parseLampiran(klaim.lampiran);
+                              if (urls.length === 1) {
+                                return (
+                                  <a
+                                    href={urls[0]}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="flex items-center justify-center space-x-1 hover:bg-emerald-50 p-1 rounded transition-colors"
+                                    title="Lihat Lampiran"
+                                  >
+                                    <Paperclip className="w-4 h-4 text-emerald-600" />
+                                    <span className="text-xs font-medium text-emerald-700">Ada</span>
+                                  </a>
+                                );
+                              }
+                              return (
+                                <span className="flex items-center justify-center space-x-1 text-xs font-medium text-emerald-700">
+                                  <Paperclip className="w-4 h-4 text-emerald-600" />
+                                  <span>{urls.length} file</span>
+                                </span>
+                              );
+                            })()
                           ) : (
                             <span className="text-xs text-gray-400">-</span>
                           )}
@@ -600,6 +713,19 @@ const Klaim = () => {
                         </td>
                       </tr>
                     ))
+                  ) : isLoadingKlaim ? (
+                    <tr>
+                      <td colSpan="15" className="py-12 text-center">
+                        <div className="flex flex-col items-center justify-center space-y-3">
+                          <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center">
+                            <div className="w-8 h-8 border-4 border-violet-600 border-t-transparent rounded-full animate-spin" />
+                          </div>
+                          <div>
+                            <p className="text-gray-600 font-medium">Memuat data...</p>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
                   ) : (
                     <tr>
                       <td colSpan="15" className="py-12 text-center">
@@ -626,7 +752,7 @@ const Klaim = () => {
         </div>
 
         {/* Pagination */}
-        {filteredKlaimRequests.length > 0 && totalPages > 1 && (
+        {totalCount > 0 && totalPages > 1 && (
           <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
             <div className="flex items-center justify-between">
               <div className="text-sm text-gray-600">
@@ -720,7 +846,7 @@ const Klaim = () => {
               </div>
 
               <div className="text-sm text-gray-600">
-                {itemsPerPage} per halaman
+                {ITEMS_PER_PAGE} per halaman
               </div>
             </div>
           </div>
@@ -757,7 +883,7 @@ const Klaim = () => {
                 <label className="block text-sm font-semibold text-gray-700 mb-2">Nomor Klaim</label>
                 <input
                   type="text"
-                  value={generateNomorKlaim()}
+                  value={generatedNomorKlaim}
                   disabled
                   className="w-full px-4 py-2.5 border border-gray-200 rounded-lg bg-gray-50 text-gray-600"
                 />
@@ -772,10 +898,11 @@ const Klaim = () => {
                   name="nomorQl"
                   value={formData.nomorQl}
                   onChange={handleInputChange}
-                  placeholder="Contoh: 12345"
+                  placeholder="Contoh: PSQL-0080"
                   required
                   className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
                 />
+                <QLInfo value={formData.nomorQl} />
               </div>
 
               {/* Tanggal (Auto) */}
@@ -801,7 +928,7 @@ const Klaim = () => {
                   className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
                 >
                   <option value="">Pilih Tipe</option>
-                  {TIPE_OPTIONS.map((tipe) => (
+                  {getTipeOptionsByRole(userRole).map((tipe) => (
                     <option key={tipe.value} value={tipe.value}>
                       {tipe.label}
                     </option>
@@ -820,7 +947,7 @@ const Klaim = () => {
                   className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
                 >
                   <option value="">Pilih ID Perusahaan</option>
-                  {ID_PERUSAHAAN_OPTIONS.map((company) => (
+                  {getIdPerusahaanOptionsByRole(userRole).map((company) => (
                     <option key={company.value} value={company.value}>
                       {company.label}
                     </option>
@@ -957,7 +1084,7 @@ const Klaim = () => {
 
               {/* Lampiran */}
               <div className="col-span-2">
-                <label className="block text-sm font-semibold text-gray-700 mb-2">Lampiran <span className="text-red-500">*</span></label>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Lampiran</label>
                 <div className="flex flex-col space-y-3">
                   <div className="flex items-center space-x-3">
                     <label className={`flex-1 flex items-center justify-center space-x-3 px-4 py-3 border-2 border-dashed rounded-lg transition-colors ${uploadingFile
@@ -974,7 +1101,6 @@ const Klaim = () => {
                         accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
                         className="hidden"
                         disabled={uploadingFile}
-                        required
                       />
                     </label>
                     {fileName && !uploadingFile && (

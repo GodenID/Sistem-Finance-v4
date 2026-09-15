@@ -13,7 +13,7 @@ import {
   PieChart as PieChartIcon
 } from 'lucide-react';
 import CompanyInfoModal from './CompanyInfoModal';
-import { getAllRecords } from '../lib/api';
+import { getDashboardCounts, getLightweightRows, cachedQuery } from '../lib/api';
 import {
   AreaChart,
   Area,
@@ -46,67 +46,53 @@ const Dashboard = () => {
     penyelesaian: []
   });
   const [isLoading, setIsLoading] = useState(true);
+  const [trendsLoading, setTrendsLoading] = useState(true);
 
-  // Fetch data dari Supabase
+  // Fetch data dari Supabase — DUA JALUR independen (render progresif):
+  //  1. Jalur cepat: 1x RPC get_dashboard_counts (cache 30 dtk) untuk kartu,
+  //     pie, bar, dan banner. Halaman terasa terisi dalam ~1 round-trip.
+  //  2. Jalur grafik: 3x baris ringan tren 7 hari, TIDAK memblokir kartu.
   useEffect(() => {
-    const fetchDashboardData = async () => {
-      try {
-        setIsLoading(true);
+    let cancelled = false;
 
-        // Fetch semua data secara paralel
-        const [paymentRequestsData, kasbonData, klaimData, penyelesaianData] = await Promise.all([
-          getAllRecords('payment_requests'),
-          getAllRecords('kasbon'),
-          getAllRecords('klaim'),
-          getAllRecords('penyelesaian')
-        ]);
-
-        // Store raw data for charts
-        setRawData({
-          paymentRequests: paymentRequestsData || [],
-          kasbon: kasbonData || [],
-          klaim: klaimData || [],
-          penyelesaian: penyelesaianData || []
-        });
-
-        // Hitung statistik untuk Payment Request
-        const prPending = paymentRequestsData.filter(pr => pr.status_approval === 'Pending').length;
-        const prApproved = paymentRequestsData.filter(pr => pr.status_approval === 'Approved').length;
-        const prRejected = paymentRequestsData.filter(pr => pr.status_approval === 'Rejected').length;
-        const prTotal = paymentRequestsData.length;
-
-        // Hitung statistik untuk Kasbon
-        const kasbonPending = kasbonData.filter(kb => kb.status_approval === 'Pending').length;
-        const kasbonApproved = kasbonData.filter(kb => kb.status_approval === 'Approved').length;
-        const kasbonRejected = kasbonData.filter(kb => kb.status_approval === 'Rejected').length;
-        const kasbonTotal = kasbonData.length;
-
-        // Hitung statistik untuk Klaim
-        const klaimPending = klaimData.filter(kl => kl.status_approval === 'Pending').length;
-        const klaimApproved = klaimData.filter(kl => kl.status_approval === 'Approved').length;
-        const klaimRejected = klaimData.filter(kl => kl.status_approval === 'Rejected').length;
-        const klaimTotal = klaimData.length;
-
-        // Hitung statistik untuk Penyelesaian
-        const penyelesaianPending = penyelesaianData.filter(p => p.status_approval === 'Pending').length;
-        const penyelesaianApproved = penyelesaianData.filter(p => p.status_approval === 'Approved').length;
-        const penyelesaianRejected = penyelesaianData.filter(p => p.status_approval === 'Rejected').length;
-        const penyelesaianTotal = penyelesaianData.length;
-
+    getDashboardCounts()
+      .then((all) => {
+        if (cancelled) return;
         setStats({
-          paymentRequest: { pending: prPending, total: prTotal, approved: prApproved, rejected: prRejected },
-          kasbon: { pending: kasbonPending, total: kasbonTotal, approved: kasbonApproved, rejected: kasbonRejected },
-          klaim: { pending: klaimPending, total: klaimTotal, approved: klaimApproved, rejected: klaimRejected },
-          penyelesaian: { pending: penyelesaianPending, total: penyelesaianTotal, approved: penyelesaianApproved, rejected: penyelesaianRejected }
+          paymentRequest: all.payment_requests,
+          kasbon: all.kasbon,
+          klaim: all.klaim,
+          penyelesaian: all.penyelesaian,
         });
-      } catch (error) {
-        console.error('Error fetching dashboard data:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
+      })
+      .catch((error) => console.error('Error fetching dashboard counts:', error))
+      .finally(() => { if (!cancelled) setIsLoading(false); });
 
-    fetchDashboardData();
+    const weekAgo = new Date();
+    weekAgo.setDate(weekAgo.getDate() - 7);
+    const sinceISO = weekAgo.toISOString();
+    // Kunci cache per hari agar tren stabil sepanjang hari
+    const dayKey = new Date().toISOString().slice(0, 10);
+    const trendOf = (table) =>
+      cachedQuery(`dashboard:trend:${table}:${dayKey}`, 60000, () =>
+        getLightweightRows(table, { columns: 'id,created_at', since: sinceISO, limit: 2000 })
+      );
+
+    setTrendsLoading(true);
+    Promise.all([trendOf('payment_requests'), trendOf('kasbon'), trendOf('klaim')])
+      .then(([prTrend, kasbonTrend, klaimTrend]) => {
+        if (cancelled) return;
+        setRawData({
+          paymentRequests: prTrend || [],
+          kasbon: kasbonTrend || [],
+          klaim: klaimTrend || [],
+          penyelesaian: []
+        });
+      })
+      .catch((error) => console.error('Error fetching dashboard trends:', error))
+      .finally(() => { if (!cancelled) setTrendsLoading(false); });
+
+    return () => { cancelled = true; };
   }, []);
 
   const menuCards = [
@@ -426,8 +412,8 @@ const Dashboard = () => {
             <p className="text-xs text-gray-500">Total vs Pending per modul</p>
           </div>
         </div>
-        <div className="h-48 sm:h-56">
-          {isLoading ? (
+          <div className="h-48 sm:h-56">
+            {trendsLoading ? (
             <div className="h-full flex items-center justify-center">
               <div className="w-8 h-8 border-4 border-primary-500 border-t-transparent rounded-full animate-spin"></div>
             </div>

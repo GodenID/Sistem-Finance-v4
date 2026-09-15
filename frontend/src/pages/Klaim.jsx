@@ -1,19 +1,24 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Plus, Search, Filter, Eye, X, ChevronLeft, ChevronRight, Banknote, Wallet, FileText, Paperclip, Download, CheckCircle, XCircle, Upload, Edit2, Trash2, PlusCircle, MinusCircle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { useNotification } from '../context/NotificationContext';
-import { TIPE_OPTIONS, ID_PERUSAHAAN_OPTIONS } from '../constants/companyTypes';
+import { TIPE_OPTIONS, ID_PERUSAHAAN_OPTIONS, getTipeOptionsByRole, getIdPerusahaanOptionsByRole } from '../constants/companyTypes';
 import TipeBadge from '../components/TipeBadge';
 import IdPerusahaanBadge from '../components/IdPerusahaanBadge';
+import QLInfo from '../components/QLInfo';
+import QLLink from '../components/QLLink';
 
-import { createRecord, getAllRecords, updateRecord, deleteRecord, bulkDeleteRecords, uploadFile } from '../lib/api';
+import { createRecord, updateRecord, deleteRecord, bulkDeleteRecords, uploadFile, countRecords } from '../lib/api';
+import { usePaginatedTable } from '../hooks/usePaginatedTable';
 import { logActivity } from '../lib/auditLog';
 import ConfirmDialog from '../components/ConfirmDialog';
 import PasteUpload from '../components/PasteUpload';
+import MultiFileUpload from '../components/MultiFileUpload';
 import { useRealtimeSubscription } from '../hooks/useRealtimeSubscription';
 import { generateKlaimNumber } from '../utils/generateUniqueNumber';
+import { sendTransferNotification } from '../lib/emailNotifications';
 
 
 const Klaim = () => {
@@ -27,11 +32,17 @@ const Klaim = () => {
   const isAdmin = userRole?.toLowerCase() === 'administrator';
   // BOD, Team Finance & Admin can edit and delete
   const canEditDelete = ['administrator', 'bod', 'team_finance'].includes(userRole?.toLowerCase());
-  const canViewConfidential = ['administrator', 'bod', 'team_finance'].includes(userRole?.toLowerCase());
-  const [searchTerm, setSearchTerm] = useState('');
+  // Only Admin & BOD can delete
+  const canDelete = ['administrator', 'bod'].includes(userRole?.toLowerCase());
+
+  // Helper to check if record is locked
+  const isLocked = (record) => {
+    if (isAdmin) return false;
+    return record.statusTransfer === 'Sudah Transfer';
+  };
+  const canViewConfidential = ['administrator', 'bod', 'team_finance', 'hrd'].includes(userRole?.toLowerCase());
   const [filterStatus, setFilterStatus] = useState('all');
-  const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage] = useState(10);
+  const ITEMS_PER_PAGE = 10;
   const [showModal, setShowModal] = useState(false);
 
   // State untuk bulk delete (hanya Administrator)
@@ -72,12 +83,16 @@ const Klaim = () => {
     namaBank: '',
     nomorRekening: '',
     namaPemilikRekening: '',
-    lampiran: null,
+    lampiran: [], // Array untuk multiple files
     keterangan: '',
   });
 
   // State untuk detail pengeluaran
   const [expenseItems, setExpenseItems] = useState([{ nama: '', nominal: '' }]);
+
+  // State untuk multiple files upload
+  const [selectedFiles, setSelectedFiles] = useState([]);
+  const [fileUploadProgress, setFileUploadProgress] = useState({});
 
   const [fileName, setFileName] = useState('');
   const [fileSize, setFileSize] = useState(0);
@@ -129,120 +144,128 @@ const Klaim = () => {
 
 
 
-  // Data Klaim dari Supabase
-  const [klaimRequests, setKlaimRequests] = useState([]);
-  const [isLoadingKlaim, setIsLoadingKlaim] = useState(true);
-
-  // Fetch klaim dari Supabase
-  const fetchKlaim = async () => {
-    try {
-      setIsLoadingKlaim(true);
-      const data = await getAllRecords('klaim');
-      // Transform data dari Supabase ke format yang digunakan di UI
-      const transformedData = data.map(item => ({
-        id: item.id,
-        nomorKlaim: item.nomor_klaim,
-        nomorQl: item.nomor_ql || '',
-        tanggal: item.created_at ? new Date(item.created_at).toISOString().split('T')[0] : '',
-        tipe: item.tipe || '',
-        idPerusahaan: item.id_perusahaan || '',
-        nominal: parseFloat(item.nominal) || 0,
-        statusApproval: item.status_approval || 'Pending',
-        disetujuiOleh: item.nama_approver || '-',
-        statusTransfer: item.status_transfer || 'Belum Transfer',
-        keterangan: item.keterangan || '',
-        lampiran: item.lampiran || null,
-        buktiTransfer: item.bukti_transfer || null,
-        namaKaryawan: item.nama_karyawan || '',
-        metodePembayaran: item.metode_pembayaran || '',
-        namaBank: item.nama_bank || '',
-        nomorRekening: item.nomor_rekening || '',
-        namaPemilikRekening: item.nama_pemilik_rekening || '',
-        isConfidential: item.is_confidential || false
-      }));
-      setKlaimRequests(transformedData);
-    } catch (error) {
-      console.error('Error fetching klaim:', error);
-      showToast('Gagal memuat data klaim', 'error');
-    } finally {
-      setIsLoadingKlaim(false);
+  // Pagination + search + filter di server (Supabase .range/.or),
+  // browser hanya menerima 1 halaman (10 row), bukan ribuan row.
+  // Kolom search default SEARCH_COLUMNS.klaim: nomor_klaim, nomor_ql, nama_karyawan, nama_event, keterangan.
+  const transformKlaimRow = useCallback((item) => {
+    let detailPengeluaran = [];
+    if (item.detail_pengeluaran) {
+      try {
+        detailPengeluaran = typeof item.detail_pengeluaran === 'string'
+          ? JSON.parse(item.detail_pengeluaran)
+          : item.detail_pengeluaran;
+        if (!Array.isArray(detailPengeluaran)) detailPengeluaran = [];
+      } catch {
+        detailPengeluaran = [];
+      }
     }
-  };
-
-  useEffect(() => {
-    fetchKlaim();
+    return {
+      id: item.id,
+      nomorKlaim: item.nomor_klaim,
+      nomorQl: item.nomor_ql || '',
+      namaEvent: item.nama_event || '',
+      tanggal: item.created_at ? new Date(item.created_at).toISOString().split('T')[0] : '',
+      tipe: item.tipe || '',
+      idPerusahaan: item.id_perusahaan || '',
+      nominal: parseFloat(item.nominal) || 0,
+      statusApproval: item.status_approval || 'Pending',
+      disetujuiOleh: item.nama_approver || '-',
+      statusTransfer: item.status_transfer || 'Belum Transfer',
+      keterangan: item.keterangan || '',
+      lampiran: item.lampiran || null,
+      buktiTransfer: item.bukti_transfer || null,
+      namaKaryawan: item.nama_karyawan || '',
+      user_id: item.user_id || null,
+      metodePembayaran: item.metode_pembayaran || '',
+      namaBank: item.nama_bank || '',
+      nomorRekening: item.nomor_rekening || '',
+      namaPemilikRekening: item.nama_pemilik_rekening || '',
+      isConfidential: item.is_confidential || false,
+      detailPengeluaran: detailPengeluaran
+    };
   }, []);
 
-  // Realtime subscription for automatic updates
+  const serverFilters = useMemo(() => {
+    if (filterStatus === 'belum-transfer') return { status_transfer: 'Belum Transfer' };
+    if (filterStatus === 'sudah-transfer') return { status_transfer: 'Sudah Transfer' };
+    return {};
+  }, [filterStatus]);
+
+  const {
+    items: klaimRequests,
+    totalCount,
+    totalPages,
+    page: currentPage,
+    setPage: setCurrentPage,
+    search: searchTerm,
+    setSearch: setSearchTerm,
+    setFilters: setServerFilters,
+    loading: isLoadingKlaim,
+    refresh: refreshPage,
+    applyInsert,
+    applyUpdate,
+    applyDelete,
+  } = usePaginatedTable('klaim', {
+    limit: ITEMS_PER_PAGE,
+    transform: transformKlaimRow,
+  });
+
+  // Terapkan filter status UI ke query server (reset ke halaman 1)
+  useEffect(() => {
+    setServerFilters(serverFilters);
+    setCurrentPage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterStatus]);
+
+  // Statistik kartu via HEAD count (4 request ringan, tanpa download row).
+  const [klaimStats, setKlaimStats] = useState({ total: 0, belum: 0, sudah: 0, approved: 0 });
+  const refreshStats = useCallback(async () => {
+    try {
+      const [total, belum, sudah, approved] = await Promise.all([
+        countRecords('klaim'),
+        countRecords('klaim', { status_transfer: 'Belum Transfer' }),
+        countRecords('klaim', { status_transfer: 'Sudah Transfer' }),
+        countRecords('klaim', { status_approval: 'Approved' }),
+      ]);
+      setKlaimStats({ total, belum, sudah, approved });
+    } catch (e) {
+      console.error('Error fetching klaim stats:', e);
+    }
+  }, []);
+
+  useEffect(() => { refreshStats(); }, [refreshStats]);
+
+  const refreshData = useCallback(async () => {
+    await Promise.all([refreshPage(), refreshStats()]);
+  }, [refreshPage, refreshStats]);
+
+  // Realtime: update halaman aktif saja, tanpa refetch full.
   const handleRealtimeChange = useCallback((eventType, newRecord, oldRecord) => {
     if (eventType === 'INSERT') {
-      setKlaimRequests(prev => {
-        const transformed = {
-          id: newRecord.id,
-          nomorKlaim: newRecord.nomor_klaim,
-          nomorQl: newRecord.nomor_ql || '',
-          tanggal: newRecord.created_at ? new Date(newRecord.created_at).toISOString().split('T')[0] : '',
-          tipe: newRecord.tipe || '',
-          idPerusahaan: newRecord.id_perusahaan || '',
-          nominal: parseFloat(newRecord.nominal) || 0,
-          statusApproval: newRecord.status_approval || 'Pending',
-          disetujuiOleh: newRecord.nama_approver || '-',
-          statusTransfer: newRecord.status_transfer || 'Belum Transfer',
-          keterangan: newRecord.keterangan || '',
-          lampiran: newRecord.lampiran || null,
-          buktiTransfer: newRecord.bukti_transfer || null,
-          namaKaryawan: newRecord.nama_karyawan || '',
-          metodePembayaran: newRecord.metode_pembayaran || '',
-          namaBank: newRecord.nama_bank || '',
-          nomorRekening: newRecord.nomor_rekening || '',
-          namaPemilikRekening: newRecord.nama_pemilik_rekening || '',
-          isConfidential: newRecord.is_confidential || false
-        };
-        return [transformed, ...prev];
-      });
+      applyInsert(transformKlaimRow(newRecord));
+      refreshStats();
       showToast('Data klaim baru ditambahkan', 'info');
     } else if (eventType === 'UPDATE') {
-      setKlaimRequests(prev => prev.map(item => {
-        if (item.id === newRecord.id) {
-          return {
-            ...item,
-            nomorKlaim: newRecord.nomor_klaim,
-            nomorQl: newRecord.nomor_ql || '',
-            tipe: newRecord.tipe || '',
-            idPerusahaan: newRecord.id_perusahaan || '',
-            nominal: parseFloat(newRecord.nominal) || 0,
-            statusApproval: newRecord.status_approval || 'Pending',
-            disetujuiOleh: newRecord.nama_approver || '-',
-            statusTransfer: newRecord.status_transfer || 'Belum Transfer',
-            keterangan: newRecord.keterangan || '',
-            lampiran: newRecord.lampiran || null,
-            buktiTransfer: newRecord.bukti_transfer || null,
-            namaKaryawan: newRecord.nama_karyawan || '',
-            metodePembayaran: newRecord.metode_pembayaran || '',
-            namaBank: newRecord.nama_bank || '',
-            nomorRekening: newRecord.nomor_rekening || '',
-            namaPemilikRekening: newRecord.nama_pemilik_rekening || '',
-            isConfidential: newRecord.is_confidential || false
-          };
-        }
-        return item;
-      }));
+      const patch = transformKlaimRow(newRecord);
+      applyUpdate(newRecord.id, patch);
+      refreshStats();
       showToast('Data klaim diperbarui', 'info');
     } else if (eventType === 'DELETE') {
-      setKlaimRequests(prev => prev.filter(item => item.id !== oldRecord.id));
+      applyDelete(oldRecord.id);
+      refreshStats();
       showToast('Data klaim dihapus', 'info');
     }
     refreshNotifications();
-  }, [refreshNotifications, showToast]);
+  }, [applyInsert, applyUpdate, applyDelete, transformKlaimRow, refreshStats, refreshNotifications, showToast]);
 
   useRealtimeSubscription('klaim', { onAnyChange: handleRealtimeChange });
 
-  // Stats calculation
+  // Stats calculation (dari HEAD count, bukan dari array halaman)
   const stats = [
-    { label: 'Total Klaim', value: klaimRequests.length.toString(), color: 'bg-violet-50 text-violet-600' },
-    { label: 'Belum Transfer', value: klaimRequests.filter(kl => kl.statusTransfer === 'Belum Transfer').length.toString(), color: 'bg-amber-50 text-amber-600' },
-    { label: 'Sudah Transfer', value: klaimRequests.filter(kl => kl.statusTransfer === 'Sudah Transfer').length.toString(), color: 'bg-emerald-50 text-emerald-600' },
-    { label: 'Approved', value: klaimRequests.filter(kl => kl.statusApproval === 'Approved').length.toString(), color: 'bg-blue-50 text-blue-600' },
+    { label: 'Total Klaim', value: klaimStats.total.toString(), color: 'bg-violet-50 text-violet-600' },
+    { label: 'Belum Transfer', value: klaimStats.belum.toString(), color: 'bg-amber-50 text-amber-600' },
+    { label: 'Sudah Transfer', value: klaimStats.sudah.toString(), color: 'bg-emerald-50 text-emerald-600' },
+    { label: 'Approved', value: klaimStats.approved.toString(), color: 'bg-blue-50 text-blue-600' },
   ];
 
   const getStatusApprovalBadge = (status) => {
@@ -266,6 +289,17 @@ const Klaim = () => {
 
   const formatRupiah = (angka) => {
     return new Intl.NumberFormat('id-ID').format(angka);
+  };
+
+  const parseLampiran = (lampiran) => {
+    if (!lampiran) return [];
+    try {
+      const parsed = typeof lampiran === 'string' ? JSON.parse(lampiran) : lampiran;
+      if (Array.isArray(parsed)) return parsed.filter(Boolean);
+      return [parsed];
+    } catch {
+      return [lampiran];
+    }
   };
 
   const getCurrentDate = () => {
@@ -303,58 +337,45 @@ const Klaim = () => {
     }
   };
 
-  const handleFileChange = async (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      // Validate file size (10MB max)
-      const maxSize = 10 * 1024 * 1024;
-      if (file.size > maxSize) {
-        showToast(`File terlalu besar. Maksimal ${(maxSize / 1024 / 1024).toFixed(0)}MB`, 'error');
-        e.target.value = '';
-        return;
-      }
+  // Handle multiple files change from MultiFileUpload component
+  const handleFilesChange = (newFiles) => {
+    setSelectedFiles(newFiles);
+  };
 
-      setUploadingFile(true);
-      setFileName(file.name);
-      setFileSize(file.size);
-      setUploadProgress(0);
+  // Upload all selected files before submit
+  const uploadAllFiles = async (nomorKlaim) => {
+    if (selectedFiles.length === 0) return [];
 
-      try {
-        // Generate unique nomor klaim for file path if not already generated
-        const nomorKlaim = generatedNomorKlaim || generateKlaimNumber();
-        if (!generatedNomorKlaim) {
-          setGeneratedNomorKlaim(nomorKlaim);
-        }
+    setUploadingFile(true);
+    const uploadedUrls = [];
+    const newProgress = {};
 
+    try {
+      for (let i = 0; i < selectedFiles.length; i++) {
+        const file = selectedFiles[i];
+        newProgress[file.name] = 0;
+        setFileUploadProgress({ ...newProgress });
+
+        // Simulate progress
         const progressInterval = setInterval(() => {
-          setUploadProgress(prev => {
-            if (prev >= 90) {
-              clearInterval(progressInterval);
-              return 90;
-            }
-            return prev + 10;
-          });
-        }, 200);
+          newProgress[file.name] = Math.min((newProgress[file.name] || 0) + 10, 90);
+          setFileUploadProgress({ ...newProgress });
+        }, 100);
 
         const result = await uploadFile(file, 'klaim', nomorKlaim, userName);
 
         clearInterval(progressInterval);
-        setUploadProgress(100);
+        newProgress[file.name] = 100;
+        setFileUploadProgress({ ...newProgress });
 
-        setFormData(prev => ({ ...prev, lampiran: result.url }));
-        showToast('File berhasil diupload', 'success');
-      } catch (error) {
-        console.error('Error uploading file:', error);
-        showToast('Gagal mengupload file: ' + (error.message || 'Silakan coba lagi'), 'error');
-        setFileName('');
-        setFileSize(0);
-        setFormData(prev => ({ ...prev, lampiran: null }));
-        e.target.value = '';
-      } finally {
-        setUploadingFile(false);
-        setUploadProgress(0);
-        setTimeout(() => setFileSize(0), 1000);
+        uploadedUrls.push(result.url);
       }
+      return uploadedUrls;
+    } catch (error) {
+      console.error('Error uploading files:', error);
+      throw error;
+    } finally {
+      setUploadingFile(false);
     }
   };
 
@@ -455,51 +476,109 @@ const Klaim = () => {
         return;
       }
 
-      // Generate unique nomor klaim at submit time to prevent conflicts
-      const nomorKlaim = generatedNomorKlaim || generateKlaimNumber();
+      // Jika sedang edit, update data yang ada
+      if (editingKlaim) {
+        // Saat edit: pertahankan nama karyawan asli, jangan overwrite dengan nama admin
+        const namaKaryawanValue = formData.namaKaryawan || '';
+        // Upload new files if any
+        let uploadedUrls = [...(formData.lampiran || [])];
+        if (selectedFiles.length > 0) {
+          const newUrls = await uploadAllFiles(editingKlaim.nomorKlaim);
+          uploadedUrls = [...uploadedUrls, ...newUrls];
+        }
 
-      // BOD transactions are confidential and auto-approved
-      const isBOD = userRole?.toLowerCase() === 'bod';
+        const updateData = {
+          nomor_ql: formData.nomorQl || null,
+          nama_event: formData.namaEvent,
+          tipe: formData.tipe,
+          id_perusahaan: formData.idPerusahaan || null,
+          nominal: parseFloat(formData.nominal),
+          metode_pembayaran: formData.metodePembayaran || null,
+          nama_bank: formData.namaBank || null,
+          nomor_rekening: formData.nomorRekening || null,
+          nama_pemilik_rekening: formData.namaPemilikRekening || null,
+          lampiran: uploadedUrls.length > 0 ? JSON.stringify(uploadedUrls) : null,
+          keterangan: formData.keterangan || null,
+          detail_pengeluaran: JSON.stringify(expenseItems.filter(item => item.nama && item.nominal)),
+          nama_karyawan: namaKaryawanValue
+        };
 
-      const newKlaimData = {
-        nomor_klaim: nomorKlaim,
-        nomor_ql: formData.nomorQl || null,
-        nama_event: formData.namaEvent,
-        tipe: formData.tipe,
-        id_perusahaan: formData.idPerusahaan || null,
-        nominal: parseFloat(formData.nominal),
-        metode_pembayaran: formData.metodePembayaran || null,
-        nama_bank: formData.namaBank || null,
-        nomor_rekening: formData.nomorRekening || null,
-        nama_pemilik_rekening: formData.namaPemilikRekening || null,
-        lampiran: formData.lampiran || null,
-        keterangan: formData.keterangan || null,
-        detail_pengeluaran: JSON.stringify(expenseItems.filter(item => item.nama && item.nominal)),
-        status_approval: isBOD ? 'Approved' : 'Pending',
-        status_transfer: 'Belum Transfer',
-        disetujui_oleh: isBOD ? userId : null,
-        nama_approver: isBOD ? userName : null,
-        nama_karyawan: formData.namaKaryawan || userName || null,
-        is_confidential: isBOD ? true : false,
-      };
+        await updateRecord('klaim', editingKlaim.id, updateData);
 
-      const createdKlaim = await createRecord('klaim', newKlaimData);
+        // Log activity untuk UPDATE
+        await logActivity({
+          tableName: 'klaim',
+          recordId: editingKlaim.id,
+          recordNumber: editingKlaim.nomorKlaim,
+          action: 'update',
+          fieldChanged: 'multiple',
+          oldValue: `Nominal: Rp ${editingKlaim.nominal.toLocaleString('id-ID')}`,
+          newValue: `Nominal: Rp ${parseFloat(formData.nominal).toLocaleString('id-ID')}`,
+          changedBy: userId,
+          changedByName: userName
+        });
 
-      // Log activity untuk CREATE
-      await logActivity({
-        tableName: 'klaim',
-        recordId: null,
-        recordNumber: nomorKlaim,
-        action: 'create',
-        fieldChanged: null,
-        oldValue: null,
-        newValue: `Nominal: Rp ${parseFloat(formData.nominal).toLocaleString('id-ID')}`,
-        changedBy: userId,
-        changedByName: userName
-      });
+        showToast('Klaim berhasil diperbarui', 'success');
+      } else {
+        // Generate unique nomor klaim at submit time to prevent conflicts
+        const nomorKlaim = generatedNomorKlaim || generateKlaimNumber();
 
-      await fetchKlaim(); // Refresh data
+        // Upload all selected files
+        let uploadedUrls = [];
+        if (selectedFiles.length > 0) {
+          uploadedUrls = await uploadAllFiles(nomorKlaim);
+        }
+
+        // BOD transactions are confidential and auto-approved
+        // HRD transactions are confidential but need BOD approval
+        const isBOD = userRole?.toLowerCase() === 'bod';
+        const isHRD = userRole?.toLowerCase() === 'hrd';
+
+        const namaKaryawanValue = isGuest ? formData.namaKaryawan : userName || '';
+
+        const newKlaimData = {
+          nomor_klaim: nomorKlaim,
+          nomor_ql: formData.nomorQl || null,
+          nama_event: formData.namaEvent,
+          tipe: formData.tipe,
+          id_perusahaan: formData.idPerusahaan || null,
+          nominal: parseFloat(formData.nominal),
+          metode_pembayaran: formData.metodePembayaran || null,
+          nama_bank: formData.namaBank || null,
+          nomor_rekening: formData.nomorRekening || null,
+          nama_pemilik_rekening: formData.namaPemilikRekening || null,
+          lampiran: uploadedUrls.length > 0 ? JSON.stringify(uploadedUrls) : null,
+          keterangan: formData.keterangan || null,
+          detail_pengeluaran: JSON.stringify(expenseItems.filter(item => item.nama && item.nominal)),
+          status_approval: isBOD ? 'Approved' : 'Pending',
+          status_transfer: 'Belum Transfer',
+          disetujui_oleh: isBOD ? userId : null,
+          nama_approver: isBOD ? userName : null,
+          nama_karyawan: namaKaryawanValue,
+          is_confidential: isBOD || isHRD,
+        };
+
+        const createdKlaim = await createRecord('klaim', newKlaimData);
+
+        // Log activity untuk CREATE
+        await logActivity({
+          tableName: 'klaim',
+          recordId: null,
+          recordNumber: nomorKlaim,
+          action: 'create',
+          fieldChanged: null,
+          oldValue: null,
+          newValue: `Nominal: Rp ${parseFloat(formData.nominal).toLocaleString('id-ID')}`,
+          changedBy: userId,
+          changedByName: userName
+        });
+
+        showToast('Klaim berhasil ditambahkan', 'success');
+      }
+
+      await refreshData(); // Refresh data
       setShowModal(false);
+      setEditingKlaim(null);
       // Reset form
       setFormData({
         nomorQl: '',
@@ -512,16 +591,17 @@ const Klaim = () => {
         namaBank: '',
         nomorRekening: '',
         namaPemilikRekening: '',
-        lampiran: null,
+        lampiran: [],
         keterangan: '',
       });
       setExpenseItems([{ nama: '', nominal: '' }]); // Reset expense items
+      setSelectedFiles([]);
+      setFileUploadProgress({});
       setFileName('');
       setGeneratedNomorKlaim(''); // Reset pre-generated nomor klaim
-      showToast('Klaim berhasil ditambahkan', 'success');
     } catch (error) {
-      console.error('Error adding klaim:', error);
-      showToast('Gagal menambahkan Klaim', 'error');
+      console.error('Error saving klaim:', error);
+      showToast(editingKlaim ? 'Gagal memperbarui Klaim' : 'Gagal menambahkan Klaim', 'error');
     } finally {
       setIsSubmitting(false);
     }
@@ -534,8 +614,19 @@ const Klaim = () => {
   // Handle Edit Klaim (untuk Administrator dan Manager)
   const handleEdit = (klaim) => {
     setEditingKlaim(klaim);
+    // Parse lampiran jika berupa JSON string
+    let lampiranArray = [];
+    if (klaim.lampiran) {
+      try {
+        lampiranArray = typeof klaim.lampiran === 'string' ? JSON.parse(klaim.lampiran) : klaim.lampiran;
+        if (!Array.isArray(lampiranArray)) lampiranArray = [lampiranArray];
+      } catch {
+        lampiranArray = [klaim.lampiran];
+      }
+    }
     setFormData({
       nomorQl: klaim.nomorQl || '',
+      namaEvent: klaim.namaEvent || '',
       tipe: klaim.tipe || '',
       idPerusahaan: klaim.idPerusahaan || '',
       namaKaryawan: klaim.namaKaryawan || '',
@@ -544,10 +635,19 @@ const Klaim = () => {
       namaBank: klaim.namaBank || '',
       nomorRekening: klaim.nomorRekening || '',
       namaPemilikRekening: klaim.namaPemilikRekening || '',
-      lampiran: klaim.lampiran || null,
+      lampiran: lampiranArray,
       keterangan: klaim.keterangan || '',
     });
-    setFileName(klaim.lampiran ? klaim.lampiran.split('/').pop() : '');
+    // Load expense items dari detailPengeluaran
+    if (klaim.detailPengeluaran && klaim.detailPengeluaran.length > 0) {
+      setExpenseItems(klaim.detailPengeluaran.map(item => ({
+        nama: item.nama || '',
+        nominal: item.nominal?.toString() || ''
+      })));
+    } else {
+      setExpenseItems([{ nama: '', nominal: '' }]);
+    }
+    setFileName(klaim.lampiran ? 'Multiple files' : '');
     setShowModal(true);
   };
 
@@ -574,7 +674,7 @@ const Klaim = () => {
             changedByName: userName
           });
           showToast('Klaim berhasil dihapus', 'success');
-          await fetchKlaim();
+          await refreshData();
           refreshNotifications();
         } catch (error) {
           console.error('Error deleting klaim:', error);
@@ -638,7 +738,7 @@ const Klaim = () => {
 
           showToast(`${selectedItems.length} klaim berhasil dihapus`, 'success');
           setSelectedItems([]);
-          await fetchKlaim();
+          await refreshData();
           refreshNotifications();
         } catch (error) {
           console.error('Error bulk deleting klaim:', error);
@@ -677,7 +777,7 @@ const Klaim = () => {
             changedByName: userName
           });
           showToast('Klaim berhasil disetujui', 'success');
-          await fetchKlaim();
+          await refreshData();
           refreshNotifications();
         } catch (error) {
           console.error('Error approving klaim:', error);
@@ -714,7 +814,7 @@ const Klaim = () => {
             changedByName: userName
           });
           showToast('Klaim berhasil ditolak', 'success');
-          await fetchKlaim();
+          await refreshData();
           refreshNotifications();
         } catch (error) {
           console.error('Error rejecting klaim:', error);
@@ -752,8 +852,16 @@ const Klaim = () => {
                 changedBy: userId,
                 changedByName: userName
               });
+              await sendTransferNotification({
+                tableName: 'klaim',
+                record: klaim,
+                amount: klaim.nominal,
+                proofUrl: '',
+                transferredBy: userName,
+                detailPath: `/klaim/${klaim.id}`
+              });
               showToast('Status transfer berhasil diperbarui', 'success');
-              await fetchKlaim();
+              await refreshData();
               refreshNotifications();
             } catch (error) {
               console.error('Error updating transfer status:', error);
@@ -794,7 +902,7 @@ const Klaim = () => {
               changedByName: userName
             });
             showToast(`Status transfer berhasil diperbarui menjadi ${newStatus}`, 'success');
-            await fetchKlaim();
+            await refreshData();
             refreshNotifications();
           } catch (error) {
             console.error('Error updating transfer status:', error);
@@ -851,12 +959,21 @@ const Klaim = () => {
         changedByName: userName
       });
 
+      await sendTransferNotification({
+        tableName: 'klaim',
+        record: transferringKlaim,
+        amount: transferringKlaim.nominal,
+        proofUrl: result.url,
+        transferredBy: userName,
+        detailPath: `/klaim/${transferringKlaim.id}`
+      });
+
       showToast('Bukti transfer berhasil diupload dan status diperbarui', 'success');
       setShowBuktiTransferModal(false);
       setTransferringKlaim(null);
       setBuktiTransferFile(null);
       setBuktiTransferFileName('');
-      await fetchKlaim();
+      await refreshData();
       refreshNotifications();
     } catch (error) {
       console.error('Error uploading bukti transfer:', error);
@@ -866,42 +983,11 @@ const Klaim = () => {
     }
   };
 
-  // Filter dan Search
-  const getFilteredAndSearchedData = () => {
-    // Sort by newest first (based on Nomor Klaim descending)
-    let filtered = [...klaimRequests].sort((a, b) => {
-      const numA = parseInt(a.nomorKlaim.split('-')[1]) || 0;
-      const numB = parseInt(b.nomorKlaim.split('-')[1]) || 0;
-      return numB - numA;
-    });
-
-    if (filterStatus !== 'all') {
-      if (filterStatus === 'belum-transfer') {
-        filtered = filtered.filter(kl => kl.statusTransfer === 'Belum Transfer');
-      } else if (filterStatus === 'sudah-transfer') {
-        filtered = filtered.filter(kl => kl.statusTransfer === 'Sudah Transfer');
-      }
-    }
-
-    if (searchTerm.trim()) {
-      const term = searchTerm.toLowerCase();
-      filtered = filtered.filter(kl =>
-        kl.nomorKlaim.toLowerCase().includes(term) ||
-        kl.nomorQl.toLowerCase().includes(term) ||
-        kl.namaKaryawan.toLowerCase().includes(term)
-      );
-    }
-
-    return filtered;
-  };
-
-  const filteredKlaimRequests = getFilteredAndSearchedData();
-
-  // Pagination
-  const totalPages = Math.ceil(filteredKlaimRequests.length / itemsPerPage);
-  const indexOfLastItem = currentPage * itemsPerPage;
-  const indexOfFirstItem = indexOfLastItem - itemsPerPage;
-  const currentItems = filteredKlaimRequests.slice(indexOfFirstItem, indexOfLastItem);
+  // Data halaman aktif SUDAH difilter + dicari di server — tidak ada
+  // sort/filter/slice di browser lagi. totalCount/totalPages dari Supabase count.
+  const currentItems = klaimRequests;
+  const indexOfLastItem = currentPage * ITEMS_PER_PAGE;
+  const indexOfFirstItem = (currentPage - 1) * ITEMS_PER_PAGE;
 
   const handlePageChange = (pageNumber) => {
     setCurrentPage(pageNumber);
@@ -910,12 +996,10 @@ const Klaim = () => {
 
   const handleFilterChange = (status) => {
     setFilterStatus(status);
-    setCurrentPage(1);
   };
 
   const handleSearchChange = (value) => {
     setSearchTerm(value);
-    setCurrentPage(1);
   };
 
   return (
@@ -965,7 +1049,7 @@ const Klaim = () => {
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
             <input
               type="text"
-              placeholder="Cari berdasarkan Nomor Klaim, Nomor QL, atau Nama Karyawan..."
+              placeholder="Cari berdasarkan Nomor Klaim, Nomor QL, Nama Event, atau Nama Karyawan..."
               value={searchTerm}
               onChange={(e) => handleSearchChange(e.target.value)}
               className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
@@ -986,7 +1070,7 @@ const Klaim = () => {
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                   }`}
               >
-                Semua ({klaimRequests.length})
+                Semua ({klaimStats.total})
               </button>
               <button
                 onClick={() => handleFilterChange('belum-transfer')}
@@ -995,7 +1079,7 @@ const Klaim = () => {
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                   }`}
               >
-                Belum ({klaimRequests.filter(kl => kl.statusTransfer === 'Belum Transfer').length})
+                Belum ({klaimStats.belum})
               </button>
               <button
                 onClick={() => handleFilterChange('sudah-transfer')}
@@ -1004,7 +1088,7 @@ const Klaim = () => {
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                   }`}
               >
-                Sudah ({klaimRequests.filter(kl => kl.statusTransfer === 'Sudah Transfer').length})
+                Sudah ({klaimStats.sudah})
               </button>
             </div>
 
@@ -1025,13 +1109,13 @@ const Klaim = () => {
           <div className="flex items-center justify-between text-sm">
             <div className="flex items-center gap-4">
               <p className="text-gray-600">
-                Menampilkan <span className="font-semibold text-gray-800">{indexOfFirstItem + 1}</span> - <span className="font-semibold text-gray-800">{Math.min(indexOfLastItem, filteredKlaimRequests.length)}</span> dari <span className="font-semibold text-gray-800">{filteredKlaimRequests.length}</span> klaim
-                {filteredKlaimRequests.length !== klaimRequests.length && (
-                  <span className="text-gray-500"> (Total: {klaimRequests.length})</span>
+                Menampilkan <span className="font-semibold text-gray-800">{totalCount === 0 ? 0 : indexOfFirstItem + 1}</span> - <span className="font-semibold text-gray-800">{Math.min(indexOfLastItem, totalCount)}</span> dari <span className="font-semibold text-gray-800">{totalCount}</span> klaim
+                {isLoadingKlaim && (
+                  <span className="text-gray-500"> (memuat...)</span>
                 )}
               </p>
-              {/* Bulk Delete Button - Administrator Only */}
-              {canEditDelete && selectedItems.length > 0 && (
+              {/* Bulk Delete Button - Admin & BOD Only */}
+              {canDelete && selectedItems.length > 0 && (
                 <button
                   onClick={handleBulkDelete}
                   disabled={isDeleting}
@@ -1073,6 +1157,7 @@ const Klaim = () => {
                     )}
                     <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Nomor Klaim</th>
                     <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Nomor QL</th>
+                    <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Nama Event</th>
                     <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Tanggal</th>
                     <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Tipe</th>
                     <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">ID Perusahaan</th>
@@ -1110,7 +1195,12 @@ const Klaim = () => {
                           )}
                           <td className="py-4 px-6">
                             <div className="flex items-center space-x-2">
-                              <span className="text-sm font-bold text-violet-600">{klaim.nomorKlaim}</span>
+                              <button
+                                onClick={() => handleDetail(klaim)}
+                                className="text-sm font-bold text-violet-600 hover:text-violet-800 hover:underline cursor-pointer"
+                              >
+                                {klaim.nomorKlaim}
+                              </button>
                               {klaim.isConfidential && (
                                 <span className="px-1.5 py-0.5 text-[10px] font-bold bg-gray-800 text-white rounded">
                                   🔒
@@ -1119,7 +1209,10 @@ const Klaim = () => {
                             </div>
                           </td>
                           <td className="py-4 px-6">
-                            <span className="text-sm text-gray-700">{isHidden ? '••••••' : klaim.nomorQl}</span>
+                            <QLLink ql={klaim.nomorQl} hidden={isHidden} className="text-sm text-gray-700" linkClassName="text-violet-600 font-medium" />
+                          </td>
+                          <td className="py-4 px-6">
+                            <span className="text-sm text-gray-700">{isHidden ? 'CONFIDENTIAL' : (klaim.namaEvent || '-')}</span>
                           </td>
                           <td className="py-4 px-6">
                             <span className="text-sm text-gray-600">{klaim.tanggal}</span>
@@ -1168,16 +1261,29 @@ const Klaim = () => {
                             {isHidden ? (
                               <span className="text-xs text-gray-400">-</span>
                             ) : klaim.lampiran ? (
-                              <a
-                                href={klaim.lampiran}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="flex items-center justify-center space-x-1 hover:bg-emerald-50 p-1 rounded transition-colors"
-                                title="Lihat Lampiran"
-                              >
-                                <Paperclip className="w-4 h-4 text-emerald-600" />
-                                <span className="text-xs font-medium text-emerald-700">Ada</span>
-                              </a>
+                              (() => {
+                                const urls = parseLampiran(klaim.lampiran);
+                                if (urls.length === 1) {
+                                  return (
+                                    <a
+                                      href={urls[0]}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="flex items-center justify-center space-x-1 hover:bg-emerald-50 p-1 rounded transition-colors"
+                                      title="Lihat Lampiran"
+                                    >
+                                      <Paperclip className="w-4 h-4 text-emerald-600" />
+                                      <span className="text-xs font-medium text-emerald-700">Ada</span>
+                                    </a>
+                                  );
+                                }
+                                return (
+                                  <span className="flex items-center justify-center space-x-1 text-xs font-medium text-emerald-700">
+                                    <Paperclip className="w-4 h-4 text-emerald-600" />
+                                    <span>{urls.length} file</span>
+                                  </span>
+                                );
+                              })()
                             ) : (
                               <span className="text-xs text-gray-400">-</span>
                             )}
@@ -1269,7 +1375,7 @@ const Klaim = () => {
                               )}
 
                               {/* Aksi Edit/Delete untuk Admin dan Manager */}
-                              {canEditDelete && (
+                              {canEditDelete && !isLocked(klaim) && (
                                 <>
                                   <button
                                     onClick={() => handleEdit(klaim)}
@@ -1279,14 +1385,16 @@ const Klaim = () => {
                                     <Edit2 className="w-4 h-4" />
                                     <span>Edit</span>
                                   </button>
-                                  <button
-                                    onClick={() => handleDelete(klaim)}
-                                    className="flex items-center space-x-1 px-3 py-1.5 bg-rose-50 text-rose-600 rounded-lg hover:bg-rose-100 transition-colors text-sm font-medium"
-                                    title="Delete"
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                    <span>Hapus</span>
-                                  </button>
+                                  {canDelete && (
+                                    <button
+                                      onClick={() => handleDelete(klaim)}
+                                      className="flex items-center space-x-1 px-3 py-1.5 bg-rose-50 text-rose-600 rounded-lg hover:bg-rose-100 transition-colors text-sm font-medium"
+                                      title="Delete"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                      <span>Hapus</span>
+                                    </button>
+                                  )}
                                 </>
                               )}
                             </div>
@@ -1320,7 +1428,7 @@ const Klaim = () => {
         </div>
 
         {/* Pagination */}
-        {filteredKlaimRequests.length > 0 && totalPages > 1 && (
+        {totalCount > 0 && totalPages > 1 && (
           <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
             <div className="flex items-center justify-between">
               <div className="text-sm text-gray-600">
@@ -1414,7 +1522,7 @@ const Klaim = () => {
               </div>
 
               <div className="text-sm text-gray-600">
-                {itemsPerPage} per halaman
+                {ITEMS_PER_PAGE} per halaman
               </div>
             </div>
           </div>
@@ -1471,14 +1579,14 @@ const Klaim = () => {
                       Nomor QL <span className="text-gray-400 text-xs">(Opsional)</span>
                     </label>
                     <input
-                      type="number"
+                      type="text"
                       name="nomorQl"
                       value={formData.nomorQl}
                       onChange={handleInputChange}
-                      placeholder="Contoh: 12345"
-                      min="0"
+                      placeholder="Contoh: PSQL-0080"
                       className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
                     />
+                    <QLInfo value={formData.nomorQl} />
                   </div>
 
                   {/* Nama Event/Project - WAJIB */}
@@ -1553,7 +1661,7 @@ const Klaim = () => {
                       className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
                     >
                       <option value="">Pilih Tipe Unit Bisnis</option>
-                      {TIPE_OPTIONS.map((tipe) => (
+                      {getTipeOptionsByRole(userRole).map((tipe) => (
                         <option key={tipe.value} value={tipe.value}>
                           {tipe.label}
                         </option>
@@ -1572,7 +1680,7 @@ const Klaim = () => {
                       className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
                     >
                       <option value="">Pilih ID Perusahaan</option>
-                      {ID_PERUSAHAAN_OPTIONS.map((company) => (
+                      {getIdPerusahaanOptionsByRole(userRole).map((company) => (
                         <option key={company.value} value={company.value}>
                           {company.label}
                         </option>
@@ -1744,43 +1852,60 @@ const Klaim = () => {
                     />
                   </div>
 
-                  {/* Lampiran - WAJIB */}
+                  {/* Lampiran - Multi-file Upload */}
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-2">
                       Lampiran <span className="text-red-500">*</span>
+                      <span className="text-gray-400 text-xs ml-2">(Dapat upload lebih dari 1 file)</span>
                     </label>
-                    <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-violet-500 transition-colors bg-white">
-                      <input
-                        type="file"
-                        id="lampiran-klaim"
-                        onChange={handleFileChange}
-                        className="hidden"
-                        accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
-                        disabled={uploadingFile}
-                      />
-                      <label htmlFor="lampiran-klaim" className="cursor-pointer flex flex-col items-center">
-                        {uploadingFile ? (
-                          <div className="flex flex-col items-center">
-                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-violet-600 mb-2"></div>
-                            <p className="text-sm text-gray-600">Mengupload... {uploadProgress}%</p>
-                          </div>
-                        ) : fileName || formData.lampiran ? (
-                          <div className="flex flex-col items-center">
-                            <FileText className="w-8 h-8 text-violet-600 mb-2" />
-                            <p className="text-sm font-medium text-gray-800">{fileName || 'File terlampir'}</p>
-                            {fileSize > 0 && <p className="text-xs text-gray-500 mt-1">{formatFileSize(fileSize)}</p>}
-                            <p className="text-xs text-violet-600 mt-2 hover:underline">Klik untuk ganti file</p>
-                          </div>
-                        ) : (
-                          <>
-                            <Paperclip className="w-8 h-8 text-gray-400 mb-2" />
-                            <p className="text-sm font-medium text-gray-700">Klik untuk upload lampiran</p>
-                            <p className="text-xs text-gray-500 mt-1">PDF, Word, Excel, JPG, PNG (Max. 10MB)</p>
-                          </>
-                        )}
-                      </label>
-                    </div>
+                    {/* Existing Files (saat edit) */}
+                    {editingKlaim && formData.lampiran && formData.lampiran.length > 0 && (
+                      <div className="mb-3 p-3 bg-violet-50 border border-violet-100 rounded-lg">
+                        <p className="text-sm font-medium text-violet-800 mb-2">File yang sudah diupload:</p>
+                        <div className="space-y-2">
+                          {formData.lampiran.map((url, index) => (
+                            <div key={index} className="flex items-center justify-between bg-white p-2 rounded border border-violet-200">
+                              <a
+                                href={url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-2 text-sm text-violet-600 hover:text-violet-800"
+                              >
+                                <Paperclip className="w-4 h-4" />
+                                <span className="truncate max-w-xs">{url.split('/').pop()}</span>
+                              </a>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setFormData(prev => ({
+                                    ...prev,
+                                    lampiran: prev.lampiran.filter((_, i) => i !== index)
+                                  }));
+                                }}
+                                className="p-1 text-red-500 hover:bg-red-50 rounded"
+                                title="Hapus file"
+                              >
+                                <X className="w-4 h-4" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <MultiFileUpload
+                      files={selectedFiles}
+                      onFilesChange={handleFilesChange}
+                      accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
+                      maxSize={10}
+                      maxFiles={10}
+                      uploading={uploadingFile}
+                      uploadProgress={fileUploadProgress}
+                      accentColor="violet"
+                      required={true}
+                      disabled={uploadingFile}
+                    />
                   </div>
+
                 </div>
               </div>
 

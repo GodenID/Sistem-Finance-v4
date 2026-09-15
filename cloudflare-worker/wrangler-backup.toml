@@ -1,0 +1,27 @@
+# Wrangler configuration untuk Backup Worker
+name = "finance-v3-backup"
+main = "backup-worker.js"
+compatibility_date = "2024-01-01"
+
+# Cron Trigger - Setiap hari jam 23:00 WIB (16:00 UTC)
+# Format: "menit jam * * *" dalam UTC
+# 23:00 WIB = 16:00 UTC
+[triggers]
+crons = ["0 16 * * *"]
+
+# R2 bucket binding untuk menyimpan backup
+[[r2_buckets]]
+binding = "BACKUP_BUCKET"
+bucket_name = "finance-v3"
+
+# Environment variables (set via Cloudflare Dashboard atau wrangler secret)
+# [vars]
+# Jangan hardcode credentials!
+
+# Secrets yang perlu di-set:
+# wrangler secret put SUPABASE_URL --config wrangler-backup.toml
+# wrangler secret put SUPABASE_ANON_KEY --config wrangler-backup.toml
+# wrangler secret put BACKUP_SECRET --config wrangler-backup.toml
+
+# Deploy dengan:
+# wrangler deploy --config wrangler-backup.toml

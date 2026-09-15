@@ -43,6 +43,7 @@ const Users = () => {
       administrator: { bg: 'bg-red-100', text: 'text-red-700', label: 'Administrator' },
       team_finance: { bg: 'bg-blue-100', text: 'text-blue-700', label: 'Team Finance' },
       bod: { bg: 'bg-purple-100', text: 'text-purple-700', label: 'BOD' },
+      hrd: { bg: 'bg-pink-100', text: 'text-pink-700', label: 'HRD' },
       manager: { bg: 'bg-emerald-100', text: 'text-emerald-700', label: 'Manager' },
       staff: { bg: 'bg-gray-100', text: 'text-gray-700', label: 'Staff' },
       guest: { bg: 'bg-amber-100', text: 'text-amber-700', label: 'Guest' }
@@ -51,9 +52,9 @@ const Users = () => {
   };
 
   const handleViewProfile = (user) => {
-    // BOD profiles are private - cannot be viewed by others
-    if (user.role === 'bod' && user.id !== currentUserId) {
-      showToast('Profil BOD tidak dapat dilihat', 'warning');
+    // BOD and HRD profiles are private - cannot be viewed by others
+    if (['bod', 'hrd'].includes(user.role) && user.id !== currentUserId) {
+      showToast(`Profil ${user.role.toUpperCase()} tidak dapat dilihat`, 'warning');
       return;
     }
     navigate(`/profile/${user.id}`);
@@ -111,8 +112,10 @@ const Users = () => {
         {filteredUsers.map((user) => {
           const roleBadge = getRoleBadge(user.role);
           const isBOD = user.role === 'bod';
+          const isHRD = user.role === 'hrd';
+          const isPrivate = isBOD || isHRD;
           const isCurrentUser = user.id === currentUserId;
-          const canView = !isBOD || isCurrentUser;
+          const canView = !isPrivate || isCurrentUser;
 
           return (
             <div
@@ -122,11 +125,11 @@ const Users = () => {
             >
               <div className="text-center">
                 {/* Avatar */}
-                <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-3 ${isBOD && !isCurrentUser
+                <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-3 ${isPrivate && !isCurrentUser
                     ? 'bg-gray-200'
                     : 'bg-gradient-to-br from-primary-500 to-primary-600'
                   }`}>
-                  {isBOD && !isCurrentUser ? (
+                  {isPrivate && !isCurrentUser ? (
                     <Lock className="w-6 h-6 text-gray-400" />
                   ) : (
                     <span className="text-2xl font-bold text-white">
@@ -137,13 +140,13 @@ const Users = () => {
 
                 {/* Name */}
                 <h3 className="font-semibold text-gray-800">
-                  {isBOD && !isCurrentUser ? '••••••••' : user.name}
+                  {isPrivate && !isCurrentUser ? '••••••••' : user.name}
                   {isCurrentUser && (
                     <span className="text-xs text-primary-600 ml-1">(Anda)</span>
                   )}
                 </h3>
                 <p className="text-sm text-gray-500">
-                  @{isBOD && !isCurrentUser ? '••••••' : user.username}
+                  @{isPrivate && !isCurrentUser ? '••••••' : user.username}
                 </p>
 
                 {/* Role Badge */}

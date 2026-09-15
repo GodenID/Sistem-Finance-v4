@@ -1,0 +1,1 @@
+const a="https://files.project.prasastigroup.id/api/projects",s="https://project.prasastigroup.id/project",e=/^[A-Z]{2,6}-\d{2,}$/,n={"leads-masuk":"Leads Masuk","proses-ql":"Proses QL","deal-running":"Deal (Running)","finish-penagihan":"Finish Penagihan","done-full-payment":"Done Full Payment","tidak-deal":"Tidak Deal"};export{a as P,e as Q,s as a,n as b};

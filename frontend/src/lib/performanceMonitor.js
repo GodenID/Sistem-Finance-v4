@@ -2,8 +2,10 @@
 const STORAGE_KEY = 'finance_performance_metrics';
 const MAX_ENTRIES = 100;
 
-// Get stored metrics
+// Get stored metrics (utamakan buffer yang belum di-flush agar update
+// beruntun tidak saling menimpa)
 export const getStoredMetrics = () => {
+  if (pendingMetrics) return pendingMetrics;
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     return stored ? JSON.parse(stored) : {
@@ -17,7 +19,28 @@ export const getStoredMetrics = () => {
   }
 };
 
-// Save metrics
+// Save metrics — DIBATCH: tiap API call sebelumnya JSON.parse+stringify
+// synchronus ke localStorage (block main thread). Sekarang tulis maks 1x/2 dtk.
+let pendingMetrics = null;
+let flushTimer = null;
+
+const flushMetrics = () => {
+  flushTimer = null;
+  if (!pendingMetrics) return;
+  const metrics = pendingMetrics;
+  pendingMetrics = null;
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(metrics));
+  } catch (error) {
+    console.error('Error saving metrics:', error);
+  }
+};
+
+// Flush saat tab ditutup agar data terakhir tidak hilang
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', flushMetrics);
+}
+
 const saveMetrics = (metrics) => {
   try {
     // Limit entries to prevent localStorage overflow
@@ -25,7 +48,10 @@ const saveMetrics = (metrics) => {
     metrics.apiCalls = metrics.apiCalls.slice(-MAX_ENTRIES);
     metrics.errors = metrics.errors.slice(-MAX_ENTRIES);
     metrics.sessions = metrics.sessions.slice(-MAX_ENTRIES);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(metrics));
+    pendingMetrics = metrics;
+    if (!flushTimer) {
+      flushTimer = setTimeout(flushMetrics, 2000);
+    }
   } catch (error) {
     console.error('Error saving metrics:', error);
   }
@@ -250,6 +276,11 @@ export const getCurrentPageMetrics = () => {
 
 // Clear all metrics
 export const clearAllMetrics = () => {
+  pendingMetrics = null;
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
   localStorage.removeItem(STORAGE_KEY);
 };
 

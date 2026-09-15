@@ -5,9 +5,10 @@ import { useVendor } from '../context/VendorContext';
 
 const Vendor = () => {
   const navigate = useNavigate();
-  const { vendors, addVendor, deleteVendor } = useVendor();
+  const { vendors, addVendor, updateVendor, deleteVendor } = useVendor();
   const [searchTerm, setSearchTerm] = useState('');
   const [showModal, setShowModal] = useState(false);
+  const [editingVendor, setEditingVendor] = useState(null);
   const [formData, setFormData] = useState({
     nama: '',
     namaBank: '',
@@ -34,11 +35,12 @@ const Vendor = () => {
       [name]: value
     }));
 
-    // Validasi nomor rekening real-time
+    // Validasi nomor rekening real-time (kecualikan diri sendiri saat edit)
     if (name === 'nomorRekening' && value) {
       setVendorError('');
       const existingVendor = vendors.find(v =>
-        v.nomorRekening === value && v.status === 'active'
+        v.nomorRekening === value && v.status === 'active' &&
+        (!editingVendor || v.id !== editingVendor.id)
       );
       if (existingVendor) {
         setVendorError(`Vendor dengan nomor rekening ${value} sudah ada: ${existingVendor.nama}`);
@@ -46,11 +48,55 @@ const Vendor = () => {
     }
   };
 
+  const openAddModal = () => {
+    setEditingVendor(null);
+    setFormData({
+      nama: '',
+      namaBank: '',
+      nomorRekening: '',
+      namaPemilikRekening: ''
+    });
+    setVendorError('');
+    setShowModal(true);
+  };
+
+  const handleEdit = (vendor) => {
+    setEditingVendor(vendor);
+    setFormData({
+      nama: vendor.nama || '',
+      namaBank: vendor.namaBank || '',
+      nomorRekening: vendor.nomorRekening || '',
+      namaPemilikRekening: vendor.namaPemilikRekening || ''
+    });
+    setVendorError('');
+    setShowModal(true);
+  };
+
+  const handleCloseModal = () => {
+    setShowModal(false);
+    setEditingVendor(null);
+    setVendorError('');
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setVendorError('');
 
     try {
+      if (editingVendor) {
+        await updateVendor(editingVendor.id, formData);
+        setEditingVendor(null);
+        setFormData({
+          nama: '',
+          namaBank: '',
+          nomorRekening: '',
+          namaPemilikRekening: ''
+        });
+        setVendorError('');
+        setShowModal(false);
+        alert('Vendor berhasil diperbarui!');
+        return;
+      }
       await addVendor(formData);
       setFormData({
         nama: '',
@@ -62,11 +108,11 @@ const Vendor = () => {
       setShowModal(false);
       alert('Vendor berhasil ditambahkan!');
     } catch (error) {
-      console.error('Error adding vendor:', error);
+      console.error(editingVendor ? 'Error updating vendor:' : 'Error adding vendor:', error);
       if (error.message?.includes('nomor rekening')) {
         setVendorError(error.message);
       } else {
-        setVendorError('Gagal menambahkan vendor. Silakan coba lagi.');
+        setVendorError(editingVendor ? 'Gagal memperbarui vendor. Silakan coba lagi.' : 'Gagal menambahkan vendor. Silakan coba lagi.');
       }
     }
   };
@@ -95,7 +141,7 @@ const Vendor = () => {
           </div>
         </div>
         <button
-          onClick={() => setShowModal(true)}
+          onClick={openAddModal}
           className="flex items-center space-x-2 bg-primary-600 text-white px-4 py-2.5 rounded-lg font-medium hover:bg-primary-700 transition-colors shadow-sm"
         >
           <Plus className="w-5 h-5" />
@@ -186,7 +232,11 @@ const Vendor = () => {
                       <button className="p-2 hover:bg-blue-50 text-blue-600 rounded-lg transition-colors">
                         <Eye className="w-4 h-4" />
                       </button>
-                      <button className="p-2 hover:bg-emerald-50 text-emerald-600 rounded-lg transition-colors">
+                      <button
+                        onClick={() => handleEdit(vendor)}
+                        title="Edit vendor"
+                        className="p-2 hover:bg-emerald-50 text-emerald-600 rounded-lg transition-colors"
+                      >
                         <Edit className="w-4 h-4" />
                       </button>
                       <button
@@ -204,14 +254,14 @@ const Vendor = () => {
         </div>
       </div>
 
-      {/* Add Vendor Modal */}
+      {/* Add/Edit Vendor Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b border-gray-200 flex items-center justify-between sticky top-0 bg-white">
-              <h3 className="text-xl font-bold text-gray-800">Tambah Vendor Baru</h3>
+              <h3 className="text-xl font-bold text-gray-800">{editingVendor ? 'Edit Vendor' : 'Tambah Vendor Baru'}</h3>
               <button
-                onClick={() => setShowModal(false)}
+                onClick={handleCloseModal}
                 className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
               >
                 <X className="w-5 h-5 text-gray-600" />
@@ -302,11 +352,11 @@ const Vendor = () => {
                   type="submit"
                   className="flex-1 bg-primary-600 text-white py-2.5 rounded-lg font-semibold hover:bg-primary-700 transition-colors"
                 >
-                  Simpan Vendor
+                  {editingVendor ? 'Simpan Perubahan' : 'Simpan Vendor'}
                 </button>
                 <button
                   type="button"
-                  onClick={() => setShowModal(false)}
+                  onClick={handleCloseModal}
                   className="flex-1 bg-gray-100 text-gray-700 py-2.5 rounded-lg font-semibold hover:bg-gray-200 transition-colors"
                 >
                   Batal

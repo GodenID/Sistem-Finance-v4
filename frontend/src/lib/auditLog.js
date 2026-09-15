@@ -1,4 +1,4 @@
-import { supabase, createRecord } from './api';
+import { supabase, isCurrentUserSuspended } from './api';
 
 /**
  * Log activity ke tabel activity_logs
@@ -28,6 +28,10 @@ export const logActivity = async ({
     // Validate required fields
     if (!tableName || !recordId || !action) {
       console.warn('logActivity: Missing required fields', { tableName, recordId, action });
+      return null;
+    }
+
+    if (isCurrentUserSuspended()) {
       return null;
     }
 

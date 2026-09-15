@@ -1,13 +1,17 @@
-﻿import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Plus, Search, Filter, Download, Eye, X, Building2, ChevronLeft, ChevronRight, Paperclip, FileText, ExternalLink, Printer, Edit2, Trash2, CheckCircle, XCircle } from 'lucide-react';
 import { useVendor } from '../context/VendorContext';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
-import { getAllRecords, createRecord, updateRecord, deleteRecord, uploadFile } from '../lib/api';
-import { TIPE_OPTIONS, ID_PERUSAHAAN_OPTIONS } from '../constants/companyTypes';
+import { createRecord, updateRecord, deleteRecord, uploadFile, countRecords } from '../lib/api';
+import { usePaginatedTable } from '../hooks/usePaginatedTable';
+import { generatePRNumber } from '../utils/generateUniqueNumber';
+import { TIPE_OPTIONS, ID_PERUSAHAAN_OPTIONS, getTipeOptionsByRole, getIdPerusahaanOptionsByRole } from '../constants/companyTypes';
 import TipeBadge from '../components/TipeBadge';
 import IdPerusahaanBadge from '../components/IdPerusahaanBadge';
+import QLInfo from '../components/QLInfo';
+import QLLink from '../components/QLLink';
 import ConfirmDialog from '../components/ConfirmDialog';
 import jsPDF from 'jspdf';
 
@@ -22,10 +26,8 @@ const PaymentRequest = () => {
   const isGuest = userRole === 'guest';
   const isFinance = userRole === 'team_finance';
 
-  const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all'); // all, belum-transfer, sudah-transfer
-  const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage] = useState(10);
+  const ITEMS_PER_PAGE = 10;
   const [showModal, setShowModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [showAddVendorModal, setShowAddVendorModal] = useState(false);
@@ -75,75 +77,86 @@ const PaymentRequest = () => {
 
   const [vendorError, setVendorError] = useState('');
 
-  // Data Payment Requests dari Supabase
-  const [paymentRequests, setPaymentRequests] = useState([]);
-  const [isLoadingPR, setIsLoadingPR] = useState(true);
-
-  // Fetch payment requests dari Supabase
-  const fetchPaymentRequests = async () => {
-    try {
-      setIsLoadingPR(true);
-      const data = await getAllRecords('payment_requests');
-      // Transform data dari Supabase ke format yang digunakan di UI
-      const transformedData = data.map(pr => {
-        // Get vendor name - vendor_id bisa UUID atau INTEGER tergantung schema
-        let vendorName = '';
-        if (pr.vendor_id) {
-          const vendor = getVendorById(pr.vendor_id);
-          vendorName = vendor?.nama || '';
-        }
-
-        return {
-          id: pr.id,
-          nomorPr: pr.nomor_pr,
-          nomorQl: pr.nomor_ql || '',
-          tanggal: pr.created_at ? new Date(pr.created_at).toISOString().split('T')[0] : '',
-          tipe: pr.tipe || '',
-          idPerusahaan: pr.id_perusahaan || '',
-          vendor: vendorName,
-          vendorId: pr.vendor_id,
-          nominal: parseFloat(pr.nominal) || 0,
-          statusApproval: pr.status_approval || 'Pending',
-          disetujuiOleh: pr.disetujui_oleh || '-',
-          statusTransfer: pr.status_transfer || 'Belum Transfer',
-          keterangan: pr.keterangan || '',
-          lampiran: pr.lampiran || null,
-          buktiTransfer: pr.bukti_transfer || null,
-          namaKaryawan: pr.nama_karyawan || '' // Nama karyawan yang membuat PR
-        };
-      });
-      setPaymentRequests(transformedData);
-    } catch (error) {
-      console.error('Error fetching payment requests:', error);
-      showToast('Gagal memuat data payment requests', 'error');
-    } finally {
-      setIsLoadingPR(false);
+  // Pagination + search + filter di server (Supabase .range/.or),
+  // browser hanya menerima 1 halaman (10 row), bukan ribuan row.
+  const transformPRRow = useCallback((pr) => {
+    // Get vendor name - vendor_id bisa UUID atau INTEGER tergantung schema
+    let vendorName = '';
+    if (pr.vendor_id) {
+      const vendor = getVendorById(pr.vendor_id);
+      vendorName = vendor?.nama || '';
     }
-  };
 
+    return {
+      id: pr.id,
+      nomorPr: pr.nomor_pr,
+      nomorQl: pr.nomor_ql || '',
+      tanggal: pr.created_at ? new Date(pr.created_at).toISOString().split('T')[0] : '',
+      tipe: pr.tipe || '',
+      idPerusahaan: pr.id_perusahaan || '',
+      vendor: vendorName,
+      vendorId: pr.vendor_id,
+      nominal: parseFloat(pr.nominal) || 0,
+      statusApproval: pr.status_approval || 'Pending',
+      disetujuiOleh: pr.disetujui_oleh || '-',
+      statusTransfer: pr.status_transfer || 'Belum Transfer',
+      keterangan: pr.keterangan || '',
+      lampiran: pr.lampiran || null,
+      buktiTransfer: pr.bukti_transfer || null,
+      namaKaryawan: pr.nama_karyawan || '' // Nama karyawan yang membuat PR
+    };
+  }, [getVendorById]);
+
+  const serverFilters = useMemo(() => {
+    if (filterStatus === 'belum-transfer') return { status_transfer: 'Belum Transfer' };
+    if (filterStatus === 'sudah-transfer') return { status_transfer: 'Sudah Transfer' };
+    return {};
+  }, [filterStatus]);
+
+  const {
+    items: paymentRequests,
+    totalCount,
+    totalPages,
+    page: currentPage,
+    setPage: setCurrentPage,
+    search: searchTerm,
+    setSearch: setSearchTerm,
+    setFilters: setServerFilters,
+    loading: isLoadingPR,
+    refresh: refreshPage,
+  } = usePaginatedTable('payment_requests', {
+    limit: ITEMS_PER_PAGE,
+    transform: transformPRRow,
+  });
+
+  // Terapkan filter status UI ke query server (reset ke halaman 1)
   useEffect(() => {
-    // Fetch payment requests saat component mount
-    // Tunggu sedikit untuk memastikan vendors sudah ter-load
-    const timer = setTimeout(() => {
-      fetchPaymentRequests();
-    }, 100);
+    setServerFilters(serverFilters);
+    setCurrentPage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterStatus]);
 
-    return () => clearTimeout(timer);
-  }, [vendors]); // Re-fetch if vendors change
-
-  // Generate nomor PR otomatis
-  const generateNomorPR = () => {
-    if (paymentRequests.length === 0) {
-      return 'PR-0001';
+  // Statistik kartu via HEAD count (4 request ringan, tanpa download row).
+  const [prBODStats, setPrBODStats] = useState({ total: 0, belum: 0, sudah: 0, approved: 0 });
+  const refreshStats = useCallback(async () => {
+    try {
+      const [total, belum, sudah, approved] = await Promise.all([
+        countRecords('payment_requests'),
+        countRecords('payment_requests', { status_transfer: 'Belum Transfer' }),
+        countRecords('payment_requests', { status_transfer: 'Sudah Transfer' }),
+        countRecords('payment_requests', { status_approval: 'Approved' }),
+      ]);
+      setPrBODStats({ total, belum, sudah, approved });
+    } catch (e) {
+      console.error('Error fetching payment request stats:', e);
     }
-    // Cari nomor PR terbesar dari semua data
-    const maxNumber = paymentRequests.reduce((max, pr) => {
-      const prNumber = parseInt(pr.nomorPr.split('-')[1]) || 0;
-      return prNumber > max ? prNumber : max;
-    }, 0);
-    const newNumber = (maxNumber + 1).toString().padStart(4, '0');
-    return `PR-${newNumber}`;
-  };
+  }, []);
+
+  useEffect(() => { refreshStats(); }, [refreshStats]);
+
+  const refreshData = useCallback(async () => {
+    await Promise.all([refreshPage(), refreshStats()]);
+  }, [refreshPage, refreshStats]);
 
   // Format tanggal sekarang
   const getCurrentDate = () => {
@@ -151,44 +164,11 @@ const PaymentRequest = () => {
     return today.toISOString().split('T')[0];
   };
 
-  // Filter dan Search
-  const getFilteredAndSearchedData = () => {
-    // Sort by newest first (based on Nomor PR descending)
-    let filtered = [...paymentRequests].sort((a, b) => {
-      const numA = parseInt(a.nomorPr.split('-')[1]) || 0;
-      const numB = parseInt(b.nomorPr.split('-')[1]) || 0;
-      return numB - numA;
-    });
-
-    // Filter by status transfer
-    if (filterStatus !== 'all') {
-      if (filterStatus === 'belum-transfer') {
-        filtered = filtered.filter(pr => pr.statusTransfer === 'Belum Transfer');
-      } else if (filterStatus === 'sudah-transfer') {
-        filtered = filtered.filter(pr => pr.statusTransfer === 'Sudah Transfer');
-      }
-    }
-
-    // Search by nomor PR, nomor QL, atau nama karyawan
-    if (searchTerm.trim()) {
-      const term = searchTerm.toLowerCase();
-      filtered = filtered.filter(pr =>
-        pr.nomorPr.toLowerCase().includes(term) ||
-        pr.nomorQl.toLowerCase().includes(term) ||
-        pr.namaKaryawan.toLowerCase().includes(term)
-      );
-    }
-
-    return filtered;
-  };
-
-  const filteredPaymentRequests = getFilteredAndSearchedData();
-
-  // Pagination
-  const totalPages = Math.ceil(filteredPaymentRequests.length / itemsPerPage);
-  const indexOfLastItem = currentPage * itemsPerPage;
-  const indexOfFirstItem = indexOfLastItem - itemsPerPage;
-  const currentItems = filteredPaymentRequests.slice(indexOfFirstItem, indexOfLastItem);
+  // Data halaman aktif SUDAH difilter + dicari di server — tidak ada
+  // sort/filter/slice di browser lagi. totalCount/totalPages dari Supabase count.
+  const currentItems = paymentRequests;
+  const indexOfLastItem = currentPage * ITEMS_PER_PAGE;
+  const indexOfFirstItem = (currentPage - 1) * ITEMS_PER_PAGE;
 
   // Handle page change
   const handlePageChange = (pageNumber) => {
@@ -196,22 +176,19 @@ const PaymentRequest = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // Reset to page 1 when filter or search changes
   const handleFilterChange = (status) => {
     setFilterStatus(status);
-    setCurrentPage(1);
   };
 
   const handleSearchChange = (value) => {
     setSearchTerm(value);
-    setCurrentPage(1);
   };
 
   const stats = [
-    { label: 'Total Request', value: paymentRequests.length.toString(), color: 'bg-blue-50 text-blue-600' },
-    { label: 'Belum Transfer', value: paymentRequests.filter(pr => pr.statusTransfer === 'Belum Transfer').length.toString(), color: 'bg-amber-50 text-amber-600' },
-    { label: 'Sudah Transfer', value: paymentRequests.filter(pr => pr.statusTransfer === 'Sudah Transfer').length.toString(), color: 'bg-emerald-50 text-emerald-600' },
-    { label: 'Approved', value: paymentRequests.filter(pr => pr.statusApproval === 'Approved').length.toString(), color: 'bg-blue-50 text-blue-600' },
+    { label: 'Total Request', value: prBODStats.total.toString(), color: 'bg-blue-50 text-blue-600' },
+    { label: 'Belum Transfer', value: prBODStats.belum.toString(), color: 'bg-amber-50 text-amber-600' },
+    { label: 'Sudah Transfer', value: prBODStats.sudah.toString(), color: 'bg-emerald-50 text-emerald-600' },
+    { label: 'Approved', value: prBODStats.approved.toString(), color: 'bg-blue-50 text-blue-600' },
   ];
 
   const getStatusApprovalBadge = (status) => {
@@ -235,6 +212,17 @@ const PaymentRequest = () => {
 
   const formatRupiah = (angka) => {
     return new Intl.NumberFormat('id-ID').format(angka);
+  };
+
+  const parseLampiran = (lampiran) => {
+    if (!lampiran) return [];
+    try {
+      const parsed = typeof lampiran === 'string' ? JSON.parse(lampiran) : lampiran;
+      if (Array.isArray(parsed)) return parsed.filter(Boolean);
+      return [parsed];
+    } catch {
+      return [lampiran];
+    }
   };
 
   const handleInputChange = (e) => {
@@ -273,7 +261,7 @@ const PaymentRequest = () => {
 
       try {
         // Generate nomor PR untuk folder structure (gunakan yang sudah ada atau generate baru)
-        const nomorPr = formData.nomorPr || generateNomorPR();
+        const nomorPr = formData.nomorPr || generatePRNumber();
 
         // Simulasi progress (karena uploadFile tidak memberikan progress)
         const progressInterval = setInterval(() => {
@@ -376,10 +364,11 @@ const PaymentRequest = () => {
         return;
       }
 
-      const namaKaryawanValue = isGuest ? formData.namaKaryawan : userName || '';
-
       // Jika sedang edit, update data yang ada
       if (editingPR) {
+        // Saat edit: pertahankan nama karyawan asli, jangan overwrite dengan nama admin
+        const namaKaryawanValue = formData.namaKaryawan || '';
+
         const updateData = {
           nomor_ql: formData.nomorQl || null,
           tipe: formData.tipe,
@@ -395,7 +384,8 @@ const PaymentRequest = () => {
         showToast('Payment Request berhasil diperbarui', 'success');
       } else {
         // Jika baru, buat data baru
-        const nomorPr = generateNomorPR();
+        const namaKaryawanValue = isGuest ? formData.namaKaryawan : userName || '';
+        const nomorPr = generatePRNumber();
         const newPRData = {
           nomor_pr: nomorPr,
           nomor_ql: formData.nomorQl || null,
@@ -416,7 +406,7 @@ const PaymentRequest = () => {
       }
 
       // Refresh data setelah berhasil simpan
-      await fetchPaymentRequests();
+      await refreshData();
 
       // Reset form
       setShowModal(false);
@@ -479,7 +469,7 @@ const PaymentRequest = () => {
         try {
           await deleteRecord('payment_requests', pr.id);
           showToast('Payment Request berhasil dihapus', 'success');
-          await fetchPaymentRequests();
+          await refreshData();
         } catch (error) {
           console.error('Error deleting payment request:', error);
           showToast('Gagal menghapus Payment Request', 'error');
@@ -501,7 +491,7 @@ const PaymentRequest = () => {
             disetujui_oleh: userName || 'Manager'
           });
           showToast('Payment Request berhasil disetujui', 'success');
-          await fetchPaymentRequests();
+          await refreshData();
         } catch (error) {
           console.error('Error approving payment request:', error);
           showToast('Gagal menyetujui Payment Request', 'error');
@@ -523,7 +513,7 @@ const PaymentRequest = () => {
             disetujui_oleh: userName || 'Manager'
           });
           showToast('Payment Request berhasil ditolak', 'success');
-          await fetchPaymentRequests();
+          await refreshData();
         } catch (error) {
           console.error('Error rejecting payment request:', error);
           showToast('Gagal menolak Payment Request', 'error');
@@ -546,7 +536,7 @@ const PaymentRequest = () => {
             status_transfer: newStatus
           });
           showToast(`Status transfer berhasil diperbarui menjadi ${newStatus}`, 'success');
-          await fetchPaymentRequests();
+          await refreshData();
         } catch (error) {
           console.error('Error updating transfer status:', error);
           showToast('Gagal memperbarui status transfer', 'error');
@@ -958,7 +948,7 @@ const PaymentRequest = () => {
                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }`}
             >
-              Semua ({paymentRequests.length})
+              Semua ({prBODStats.total})
             </button>
             <button
               onClick={() => handleFilterChange('belum-transfer')}
@@ -967,7 +957,7 @@ const PaymentRequest = () => {
                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }`}
             >
-              Belum Transfer ({paymentRequests.filter(pr => pr.statusTransfer === 'Belum Transfer').length})
+              Belum Transfer ({prBODStats.belum})
             </button>
             <button
               onClick={() => handleFilterChange('sudah-transfer')}
@@ -976,7 +966,7 @@ const PaymentRequest = () => {
                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }`}
             >
-              Sudah Transfer ({paymentRequests.filter(pr => pr.statusTransfer === 'Sudah Transfer').length})
+              Sudah Transfer ({prBODStats.sudah})
             </button>
 
             {/* Clear Filter & Search */}
@@ -996,9 +986,9 @@ const PaymentRequest = () => {
           {/* Result Info */}
           <div className="flex items-center justify-between text-sm">
             <p className="text-gray-600">
-              Menampilkan <span className="font-semibold text-gray-800">{indexOfFirstItem + 1}</span> - <span className="font-semibold text-gray-800">{Math.min(indexOfLastItem, filteredPaymentRequests.length)}</span> dari <span className="font-semibold text-gray-800">{filteredPaymentRequests.length}</span> payment request
-              {filteredPaymentRequests.length !== paymentRequests.length && (
-                <span className="text-gray-500"> (Total: {paymentRequests.length})</span>
+              Menampilkan <span className="font-semibold text-gray-800">{totalCount === 0 ? 0 : indexOfFirstItem + 1}</span> - <span className="font-semibold text-gray-800">{Math.min(indexOfLastItem, totalCount)}</span> dari <span className="font-semibold text-gray-800">{totalCount}</span> payment request
+              {isLoadingPR && (
+                <span className="text-gray-500"> (memuat...)</span>
               )}
             </p>
             {searchTerm && (
@@ -1043,7 +1033,7 @@ const PaymentRequest = () => {
                           <span className="text-sm font-bold text-primary-600">{request.nomorPr}</span>
                         </td>
                         <td className="py-4 px-6">
-                          <span className="text-sm text-gray-700">{request.nomorQl}</span>
+                          <QLLink ql={request.nomorQl} className="text-sm text-gray-700" linkClassName="text-blue-600 font-medium" />
                         </td>
                         <td className="py-4 px-6">
                           <span className="text-sm text-gray-600">{request.tanggal}</span>
@@ -1065,16 +1055,29 @@ const PaymentRequest = () => {
                         </td>
                         <td className="py-4 px-6 text-center">
                           {request.lampiran ? (
-                            <a
-                              href={request.lampiran}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex items-center justify-center space-x-1 hover:bg-emerald-50 p-1 rounded transition-colors"
-                              title="Lihat Lampiran"
-                            >
-                              <Paperclip className="w-4 h-4 text-emerald-600" />
-                              <span className="text-xs font-medium text-emerald-700">Ada</span>
-                            </a>
+                            (() => {
+                              const urls = parseLampiran(request.lampiran);
+                              if (urls.length === 1) {
+                                return (
+                                  <a
+                                    href={urls[0]}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="flex items-center justify-center space-x-1 hover:bg-emerald-50 p-1 rounded transition-colors"
+                                    title="Lihat Lampiran"
+                                  >
+                                    <Paperclip className="w-4 h-4 text-emerald-600" />
+                                    <span className="text-xs font-medium text-emerald-700">Ada</span>
+                                  </a>
+                                );
+                              }
+                              return (
+                                <span className="flex items-center justify-center space-x-1 text-xs font-medium text-emerald-700">
+                                  <Paperclip className="w-4 h-4 text-emerald-600" />
+                                  <span>{urls.length} file</span>
+                                </span>
+                              );
+                            })()
                           ) : (
                             <span className="text-xs text-gray-400">-</span>
                           )}
@@ -1222,7 +1225,7 @@ const PaymentRequest = () => {
 
         {/* Pagination */}
         {
-          filteredPaymentRequests.length > 0 && totalPages > 1 && (
+          totalCount > 0 && totalPages > 1 && (
             <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
               <div className="flex items-center justify-between">
                 <div className="text-sm text-gray-600">
@@ -1361,7 +1364,7 @@ const PaymentRequest = () => {
                     <label className="block text-sm font-semibold text-gray-700 mb-2">Nomor PR</label>
                     <input
                       type="text"
-                      value={editingPR ? editingPR.nomorPr : generateNomorPR()}
+                      value={editingPR ? editingPR.nomorPr : 'Akan digenerate otomatis saat submit'}
                       disabled
                       className="w-full px-4 py-2.5 border border-gray-200 rounded-lg bg-gray-100 text-gray-600 font-mono"
                     />
@@ -1376,9 +1379,10 @@ const PaymentRequest = () => {
                       name="nomorQl"
                       value={formData.nomorQl}
                       onChange={handleInputChange}
-                      placeholder="Contoh: QL-2024-001"
+                      placeholder="Contoh: PSQL-0080"
                       className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                     />
+                    <QLInfo value={formData.nomorQl} />
                   </div>
 
                   {/* Tanggal (Auto) */}
@@ -1437,7 +1441,7 @@ const PaymentRequest = () => {
                       className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                     >
                       <option value="">Pilih Tipe</option>
-                      {TIPE_OPTIONS.map((tipe) => (
+                      {getTipeOptionsByRole(userRole).map((tipe) => (
                         <option key={tipe.value} value={tipe.value}>
                           {tipe.label}
                         </option>
@@ -1456,7 +1460,7 @@ const PaymentRequest = () => {
                       className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                     >
                       <option value="">Pilih ID Perusahaan</option>
-                      {ID_PERUSAHAAN_OPTIONS.map((company) => (
+                      {getIdPerusahaanOptionsByRole(userRole).map((company) => (
                         <option key={company.value} value={company.value}>
                           {company.label}
                         </option>

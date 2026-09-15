@@ -1,13 +1,16 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plus, Search, Filter, Eye, X, ChevronLeft, ChevronRight, CheckCircle, XCircle, Clock, FileText, Paperclip, Trash2, PlusCircle, Banknote, Wallet, Download, Edit2 } from 'lucide-react';
+import { ArrowLeft, Plus, Search, Filter, Eye, X, ChevronLeft, ChevronRight, CheckCircle, XCircle, Clock, FileText, Paperclip, Trash2, PlusCircle, Banknote, Wallet, Download, Edit2, Upload, Loader2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { useNotification } from '../context/NotificationContext';
 
-import { createRecord, getAllRecords, updateRecord, deleteRecord, uploadFile } from '../lib/api';
+import { createRecord, updateRecord, deleteRecord, uploadFile, countRecords, getLightweightRows } from '../lib/api';
+import { usePaginatedTable } from '../hooks/usePaginatedTable';
 import { logActivity } from '../lib/auditLog';
 import ConfirmDialog from '../components/ConfirmDialog';
+import PasteUpload from '../components/PasteUpload';
+import QLInfo from '../components/QLInfo';
 import { useRealtimeSubscription } from '../hooks/useRealtimeSubscription';
 import { generatePenyelesaianNumber } from '../utils/generateUniqueNumber';
 
@@ -20,8 +23,13 @@ const Penyelesaian = () => {
   const isFinance = userRole === 'team_finance';
   const canManage = ['administrator', 'manager', 'bod'].includes(userRole);
   const canDelete = ['administrator', 'manager'].includes(userRole);
-  const [searchTerm, setSearchTerm] = useState('');
+  const isAdmin = userRole === 'administrator';
+  const canViewConfidential = ['administrator', 'bod', 'team_finance', 'hrd'].includes(userRole?.toLowerCase());
 
+  const isLocked = (item) => {
+    if (isAdmin) return false;
+    return item.statusApproval === 'Approved' || item.statusPenyelesaian === 'Selesai';
+  };
   // State untuk confirm dialog
   const [confirmDialog, setConfirmDialog] = useState({
     isOpen: false,
@@ -31,8 +39,7 @@ const Penyelesaian = () => {
     onConfirm: () => { }
   });
   const [filterStatus, setFilterStatus] = useState('all');
-  const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage] = useState(10);
+  const ITEMS_PER_PAGE = 10;
   const [showModal, setShowModal] = useState(false);
 
   // State untuk form Penyelesaian
@@ -45,6 +52,7 @@ const Penyelesaian = () => {
     detailPengeluaran: [],
     metodePengembalian: '',
     lampiran: null,
+    lampiranPengembalian: null,
     keterangan: '',
   });
 
@@ -52,147 +60,227 @@ const Penyelesaian = () => {
   const [fileSize, setFileSize] = useState(0);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  
+  // State untuk lampiran bukti pengembalian ke finance
+  const [fileNamePengembalian, setFileNamePengembalian] = useState('');
+  const [fileSizePengembalian, setFileSizePengembalian] = useState(0);
+  const [uploadingFilePengembalian, setUploadingFilePengembalian] = useState(false);
+  const [uploadProgressPengembalian, setUploadProgressPengembalian] = useState(0);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [previewFile, setPreviewFile] = useState(null);
   const [newExpenseItem, setNewExpenseItem] = useState({ deskripsi: '', nominal: '' });
   const [kasbonValidation, setKasbonValidation] = useState({ isValid: null, message: '', isChecking: false });
 
+  // Draft penyelesaian (localStorage) — agar detailPengeluaran tidak hilang saat
+  // back / pindah ke detail / modal tertutup / refresh. Draft hanya dihapus setelah submit sukses.
+  const DRAFT_KEY = 'penyelesaian_form_draft_v1';
+  const [draftLoaded, setDraftLoaded] = useState(false);
+
+  // Restore draft saat komponen mount (misal user back dari detail)
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(DRAFT_KEY);
+      if (raw) {
+        const draft = JSON.parse(raw);
+        if (draft && typeof draft === 'object') {
+          if (draft.formData) {
+            setFormData(prev => ({ ...prev, ...draft.formData }));
+          }
+          if (draft.newExpenseItem) {
+            setNewExpenseItem(draft.newExpenseItem);
+          }
+          if (draft.kasbonValidation && draft.kasbonValidation.isValid === true) {
+            setKasbonValidation(draft.kasbonValidation);
+          }
+          if (draft.fileName) setFileName(draft.fileName);
+          if (draft.fileNamePengembalian) setFileNamePengembalian(draft.fileNamePengembalian);
+        }
+      }
+    } catch (e) {
+      console.warn('Gagal restore draft penyelesaian:', e);
+    } finally {
+      setDraftLoaded(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Simpan draft setiap ada perubahan (hanya setelah restore selesai & saat modal create terbuka,
+  // agar state edit/detail yang navigasi away tidak ikut tersimpan sebagai draft create)
+  useEffect(() => {
+    if (!draftLoaded) return;
+    if (!showModal) return;
+    try {
+      const hasContent =
+        (formData.nomorKasbon && formData.nomorKasbon.trim() !== '') ||
+        (formData.detailPengeluaran && formData.detailPengeluaran.length > 0) ||
+        (formData.keterangan && formData.keterangan.trim() !== '') ||
+        (newExpenseItem.deskripsi && newExpenseItem.deskripsi.trim() !== '') ||
+        (newExpenseItem.nominal && String(newExpenseItem.nominal).trim() !== '');
+      if (!hasContent) return;
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({
+        formData,
+        newExpenseItem,
+        kasbonValidation: kasbonValidation.isValid === true ? kasbonValidation : { isValid: null, message: '', isChecking: false },
+        fileName,
+        fileNamePengembalian,
+      }));
+    } catch (e) {
+      console.warn('Gagal simpan draft penyelesaian:', e);
+    }
+  }, [formData, newExpenseItem, kasbonValidation, fileName, fileNamePengembalian, draftLoaded, showModal]);
+
+  const clearPenyelesaianDraft = () => {
+    try { localStorage.removeItem(DRAFT_KEY); } catch (e) { /* ignore */ }
+  };
+
   // State untuk mencegah double submit
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Data Kasbon untuk di-lookup
+  // State untuk upload bukti kekurangan dari table
+  const [showBuktiKekuranganModal, setShowBuktiKekuranganModal] = useState(false);
+  const [buktiKekuranganFile, setBuktiKekuranganFile] = useState(null);
+  const [isUploadingBuktiKekurangan, setIsUploadingBuktiKekurangan] = useState(false);
+  const [selectedPenyelesaianForKekurangan, setSelectedPenyelesaianForKekurangan] = useState(null);
+
+  // Data Kasbon untuk di-lookup (dropdown saja — kolom ringan, bukan full row)
   const [kasbonList, setKasbonList] = useState([]);
   const [isLoadingKasbon, setIsLoadingKasbon] = useState(true);
 
-  // Data Penyelesaian dari Supabase
-  const [penyelesaianRequests, setPenyelesaianRequests] = useState([]);
-  const [isLoadingPenyelesaian, setIsLoadingPenyelesaian] = useState(true);
+  // Transform row penyelesaian Supabase -> UI (dipakai hook pagination + realtime).
+  // Pagination + search + filter dikerjakan di server (Supabase .range/.or),
+  // browser hanya menerima 1 halaman (10 row), bukan ribuan row.
+  const transformPenyelesaianRow = useCallback((item) => ({
+    id: item.id,
+    nomorPenyelesaian: item.nomor_penyelesaian,
+    nomorKasbon: item.nomor_kasbon || '',
+    nomorQl: item.nomor_ql || '',
+    namaEvent: item.nama_event || '',
+    tanggal: item.created_at ? new Date(item.created_at).toISOString().split('T')[0] : '',
+    namaKaryawan: item.nama_karyawan || '',
+    kasbonNominal: parseFloat(item.kasbon_nominal) || 0,
+    totalPengeluaran: parseFloat(item.total_pengeluaran) || 0,
+    selisih: parseFloat(item.selisih) || 0,
+    statusSelisih: item.status_selisih || 'Pas',
+    metodePengembalian: item.metode_pengembalian || '',
+    lampiran: item.lampiran || null,
+    lampiranPengembalian: item.lampiran_pengembalian || null,
+    buktiKekurangan: item.bukti_kekurangan || null,
+    statusApproval: item.status_approval || 'Pending',
+    disetujuiOleh: item.nama_approver || '-',
+    statusPenyelesaian: item.status_penyelesaian || 'Belum Selesai',
+    detailPengeluaran: item.detail_pengeluaran || [],
+    keterangan: item.keterangan || '',
+    isConfidential: item.is_confidential || false
+  }), []);
 
-  // Fetch kasbon dari Supabase
-  const fetchKasbon = async () => {
+  const serverFilters = useMemo(() => {
+    if (filterStatus === 'belum-selesai') return { status_penyelesaian: 'Belum Selesai' };
+    if (filterStatus === 'selesai') return { status_penyelesaian: 'Selesai' };
+    return {};
+  }, [filterStatus]);
+
+  const {
+    items: penyelesaianRequests,
+    totalCount,
+    totalPages,
+    page: currentPage,
+    setPage: setCurrentPage,
+    search: searchTerm,
+    setSearch: setSearchTerm,
+    setFilters: setServerFilters,
+    loading: isLoadingPenyelesaian,
+    refresh: refreshPage,
+    applyInsert,
+    applyUpdate,
+    applyDelete,
+  } = usePaginatedTable('penyelesaian', {
+    limit: ITEMS_PER_PAGE,
+    transform: transformPenyelesaianRow,
+  });
+
+  // Terapkan filter status UI ke query server (reset ke halaman 1)
+  useEffect(() => {
+    setServerFilters(serverFilters);
+    setCurrentPage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterStatus]);
+
+  // Statistik kartu via HEAD count (4 request ringan, tanpa download row).
+  const [penyelesaianStats, setPenyelesaianStats] = useState({ total: 0, belumSelesai: 0, selesai: 0, approved: 0 });
+  const refreshStats = useCallback(async () => {
+    try {
+      const [total, belumSelesai, selesai, approved] = await Promise.all([
+        countRecords('penyelesaian'),
+        countRecords('penyelesaian', { status_penyelesaian: 'Belum Selesai' }),
+        countRecords('penyelesaian', { status_penyelesaian: 'Selesai' }),
+        countRecords('penyelesaian', { status_approval: 'Approved' }),
+      ]);
+      setPenyelesaianStats({ total, belumSelesai, selesai, approved });
+    } catch (e) {
+      console.error('Error fetching penyelesaian stats:', e);
+    }
+  }, []);
+
+  useEffect(() => { refreshStats(); }, [refreshStats]);
+
+  const refreshData = useCallback(async () => {
+    await Promise.all([refreshPage(), refreshStats()]);
+  }, [refreshPage, refreshStats]);
+
+  // Lookup ringan kasbon untuk dropdown (kolom minimal, limit 500)
+  const fetchKasbonLookup = useCallback(async () => {
     try {
       setIsLoadingKasbon(true);
-      const data = await getAllRecords('kasbon');
+      const data = await getLightweightRows('kasbon', {
+        columns: 'id,nomor_kasbon,nomor_ql,nama_event,nominal,nama_karyawan',
+        limit: 500,
+      });
       const transformedData = data.map(item => ({
         id: item.id,
         nomorKasbon: item.nomor_kasbon,
         nomorQl: item.nomor_ql || '',
-        namaEvent: item.nama_event || '', // Include nama_event from kasbon
+        namaEvent: item.nama_event || '',
         nominal: parseFloat(item.nominal) || 0,
         namaKaryawan: item.nama_karyawan || ''
       }));
       setKasbonList(transformedData);
     } catch (error) {
-      console.error('Error fetching kasbon:', error);
+      console.error('Error fetching kasbon lookup:', error);
     } finally {
       setIsLoadingKasbon(false);
     }
-  };
-
-  // Fetch penyelesaian dari Supabase
-  const fetchPenyelesaian = async () => {
-    try {
-      setIsLoadingPenyelesaian(true);
-      const data = await getAllRecords('penyelesaian');
-      const transformedData = data.map(item => ({
-        id: item.id,
-        nomorPenyelesaian: item.nomor_penyelesaian,
-        nomorKasbon: item.nomor_kasbon || '',
-        nomorQl: item.nomor_ql || '',
-        tanggal: item.created_at ? new Date(item.created_at).toISOString().split('T')[0] : '',
-        namaKaryawan: item.nama_karyawan || '',
-        kasbonNominal: parseFloat(item.kasbon_nominal) || 0,
-        totalPengeluaran: parseFloat(item.total_pengeluaran) || 0,
-        selisih: parseFloat(item.selisih) || 0,
-        statusSelisih: item.status_selisih || 'Pas',
-        metodePengembalian: item.metode_pengembalian || '',
-        lampiran: item.lampiran || null,
-        statusApproval: item.status_approval || 'Pending',
-        disetujuiOleh: item.nama_approver || '-',
-        statusPenyelesaian: item.status_penyelesaian || 'Belum Selesai',
-        detailPengeluaran: item.detail_pengeluaran || [],
-        keterangan: item.keterangan || ''
-      }));
-      setPenyelesaianRequests(transformedData);
-    } catch (error) {
-      console.error('Error fetching penyelesaian:', error);
-      showToast('Gagal memuat data penyelesaian', 'error');
-    } finally {
-      setIsLoadingPenyelesaian(false);
-    }
-  };
-
-  React.useEffect(() => {
-    fetchKasbon();
-    fetchPenyelesaian();
   }, []);
 
-  // Realtime subscription for automatic updates
+  useEffect(() => {
+    fetchKasbonLookup();
+  }, [fetchKasbonLookup]);
+
+  // Realtime: update halaman aktif saja, tanpa refetch full.
   const handleRealtimeChange = useCallback((eventType, newRecord, oldRecord) => {
     if (eventType === 'INSERT') {
-      setPenyelesaianRequests(prev => {
-        const transformed = {
-          id: newRecord.id,
-          nomorPenyelesaian: newRecord.nomor_penyelesaian,
-          nomorKasbon: newRecord.nomor_kasbon || '',
-          nomorQl: newRecord.nomor_ql || '',
-          tanggal: newRecord.created_at ? new Date(newRecord.created_at).toISOString().split('T')[0] : '',
-          namaKaryawan: newRecord.nama_karyawan || '',
-          kasbonNominal: parseFloat(newRecord.kasbon_nominal) || 0,
-          totalPengeluaran: parseFloat(newRecord.total_pengeluaran) || 0,
-          selisih: parseFloat(newRecord.selisih) || 0,
-          statusSelisih: newRecord.status_selisih || 'Pas',
-          metodePengembalian: newRecord.metode_pengembalian || '',
-          lampiran: newRecord.lampiran || null,
-          statusApproval: newRecord.status_approval || 'Pending',
-          disetujuiOleh: newRecord.nama_approver || '-',
-          statusPenyelesaian: newRecord.status_penyelesaian || 'Belum Selesai',
-          detailPengeluaran: newRecord.detail_pengeluaran || [],
-          keterangan: newRecord.keterangan || ''
-        };
-        return [transformed, ...prev];
-      });
+      applyInsert(transformPenyelesaianRow(newRecord));
+      refreshStats();
       showToast('Data penyelesaian baru ditambahkan', 'info');
     } else if (eventType === 'UPDATE') {
-      setPenyelesaianRequests(prev => prev.map(item => {
-        if (item.id === newRecord.id) {
-          return {
-            ...item,
-            nomorPenyelesaian: newRecord.nomor_penyelesaian,
-            nomorKasbon: newRecord.nomor_kasbon || '',
-            nomorQl: newRecord.nomor_ql || '',
-            namaKaryawan: newRecord.nama_karyawan || '',
-            kasbonNominal: parseFloat(newRecord.kasbon_nominal) || 0,
-            totalPengeluaran: parseFloat(newRecord.total_pengeluaran) || 0,
-            selisih: parseFloat(newRecord.selisih) || 0,
-            statusSelisih: newRecord.status_selisih || 'Pas',
-            metodePengembalian: newRecord.metode_pengembalian || '',
-            lampiran: newRecord.lampiran || null,
-            statusApproval: newRecord.status_approval || 'Pending',
-            disetujuiOleh: newRecord.nama_approver || '-',
-            statusPenyelesaian: newRecord.status_penyelesaian || 'Belum Selesai',
-            detailPengeluaran: newRecord.detail_pengeluaran || [],
-            keterangan: newRecord.keterangan || ''
-          };
-        }
-        return item;
-      }));
+      applyUpdate(newRecord.id, transformPenyelesaianRow(newRecord));
+      refreshStats();
       showToast('Data penyelesaian diperbarui', 'info');
     } else if (eventType === 'DELETE') {
-      setPenyelesaianRequests(prev => prev.filter(item => item.id !== oldRecord.id));
+      applyDelete(oldRecord.id);
+      refreshStats();
       showToast('Data penyelesaian dihapus', 'info');
     }
     refreshNotifications();
-  }, [refreshNotifications, showToast]);
+  }, [applyInsert, applyUpdate, applyDelete, transformPenyelesaianRow, refreshStats, refreshNotifications, showToast]);
 
   useRealtimeSubscription('penyelesaian', { onAnyChange: handleRealtimeChange });
 
-  // Stats calculation
+  // Stats calculation (dari HEAD count, bukan dari array halaman)
   const stats = [
-    { label: 'Total Penyelesaian', value: penyelesaianRequests.length.toString(), color: 'bg-amber-50 text-amber-600' },
-    { label: 'Belum Selesai', value: penyelesaianRequests.filter(p => p.statusPenyelesaian === 'Belum Selesai').length.toString(), color: 'bg-orange-50 text-orange-600' },
-    { label: 'Selesai', value: penyelesaianRequests.filter(p => p.statusPenyelesaian === 'Selesai').length.toString(), color: 'bg-emerald-50 text-emerald-600' },
-    { label: 'Approved', value: penyelesaianRequests.filter(p => p.statusApproval === 'Approved').length.toString(), color: 'bg-blue-50 text-blue-600' },
+    { label: 'Total Penyelesaian', value: penyelesaianStats.total.toString(), color: 'bg-amber-50 text-amber-600' },
+    { label: 'Belum Selesai', value: penyelesaianStats.belumSelesai.toString(), color: 'bg-orange-50 text-orange-600' },
+    { label: 'Selesai', value: penyelesaianStats.selesai.toString(), color: 'bg-emerald-50 text-emerald-600' },
+    { label: 'Approved', value: penyelesaianStats.approved.toString(), color: 'bg-blue-50 text-blue-600' },
   ];
 
   const getStatusApprovalBadge = (status) => {
@@ -247,20 +335,27 @@ const Penyelesaian = () => {
         message: 'Nomor kasbon tidak valid atau tidak ditemukan',
         isChecking: false
       });
-      // Reset form data
+      // Jangan hapus detailPengeluaran user — hanya reset field auto-fill dari kasbon.
+      // User bisa perbaiki nomor kasbon tanpa harus input ulang detail.
       setFormData(prev => ({
         ...prev,
         nomorQl: '',
+        namaEvent: '',
         kasbonNominal: 0,
-        namaKaryawan: isGuest ? '' : userName || '',
-        detailPengeluaran: [],
-        metodePengembalian: ''
+        namaKaryawan: isGuest ? '' : userName || ''
       }));
       return;
     }
 
-    // Cek apakah kasbon sudah diselesaikan
-    const sudahDiselesaikan = penyelesaianRequests.some(p => p.nomorKasbon === nomorKasbon);
+    // Cek apakah kasbon sudah diselesaikan (server-side count — list utama paginated,
+    // tidak bisa dicek dari array halaman saja)
+    let sudahDiselesaikan = false;
+    try {
+      sudahDiselesaikan = (await countRecords('penyelesaian', { nomor_kasbon: nomorKasbon })) > 0;
+    } catch (e) {
+      console.error('Error checking penyelesaian:', e);
+      sudahDiselesaikan = penyelesaianRequests.some(p => p.nomorKasbon === nomorKasbon);
+    }
 
     if (sudahDiselesaikan) {
       setKasbonValidation({
@@ -268,14 +363,13 @@ const Penyelesaian = () => {
         message: 'Kasbon ini sudah diselesaikan',
         isChecking: false
       });
-      // Reset form data
+      // Jangan hapus detailPengeluaran user — hanya reset field auto-fill dari kasbon.
       setFormData(prev => ({
         ...prev,
         nomorQl: '',
+        namaEvent: '',
         kasbonNominal: 0,
-        namaKaryawan: isGuest ? '' : userName || '',
-        detailPengeluaran: [],
-        metodePengembalian: ''
+        namaKaryawan: isGuest ? '' : userName || ''
       }));
       return;
     }
@@ -286,15 +380,22 @@ const Penyelesaian = () => {
       message: 'Kasbon ditemukan',
       isChecking: false
     });
-    setFormData(prev => ({
-      ...prev,
-      nomorQl: kasbon.nomorQl || '',
-      namaEvent: kasbon.namaEvent || '', // Auto-fill namaEvent from kasbon
-      kasbonNominal: kasbon.nominal || 0,
-      namaKaryawan: kasbon.namaKaryawan || '',
-      detailPengeluaran: [],
-      metodePengembalian: ''
-    }));
+    setFormData(prev => {
+      // Pertahankan detailPengeluaran user — jangan pernah reset saat re-validasi kasbon yang sama.
+      // Hanya reset metodePengembalian jika ganti ke kasbon lain (nominal/karyawan berbeda),
+      // karena total & selisih ikut berubah.
+      const isGantiKasbon =
+        prev.kasbonNominal !== (kasbon.nominal || 0) ||
+        prev.namaKaryawan !== (kasbon.namaKaryawan || '');
+      return {
+        ...prev,
+        nomorQl: kasbon.nomorQl || '',
+        namaEvent: kasbon.namaEvent || '', // Auto-fill namaEvent from kasbon
+        kasbonNominal: kasbon.nominal || 0,
+        namaKaryawan: kasbon.namaKaryawan || '',
+        ...(isGantiKasbon ? { metodePengembalian: '' } : {}),
+      };
+    });
   };
 
   const handleInputChange = (e) => {
@@ -364,6 +465,57 @@ const Penyelesaian = () => {
         setUploadingFile(false);
         setUploadProgress(0);
         setTimeout(() => setFileSize(0), 1000);
+      }
+    }
+  };
+
+  // Handle file upload untuk bukti pengembalian ke finance
+  const handleFilePengembalianChange = async (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const maxSize = 10 * 1024 * 1024;
+      if (file.size > maxSize) {
+        showToast(`File terlalu besar. Maksimal ${(maxSize / 1024 / 1024).toFixed(0)}MB`, 'error');
+        e.target.value = '';
+        return;
+      }
+
+      setUploadingFilePengembalian(true);
+      setFileNamePengembalian(file.name);
+      setFileSizePengembalian(file.size);
+      setUploadProgressPengembalian(0);
+
+      try {
+        const nomorPenyelesaian = formData.nomorPenyelesaian || generatePenyelesaianNumber();
+
+        const progressInterval = setInterval(() => {
+          setUploadProgressPengembalian(prev => {
+            if (prev >= 90) {
+              clearInterval(progressInterval);
+              return 90;
+            }
+            return prev + 10;
+          });
+        }, 200);
+
+        const result = await uploadFile(file, 'penyelesaian', `${nomorPenyelesaian}-pengembalian`, userName);
+
+        clearInterval(progressInterval);
+        setUploadProgressPengembalian(100);
+
+        setFormData(prev => ({ ...prev, lampiranPengembalian: result.url }));
+        showToast('Bukti pengembalian berhasil diupload', 'success');
+      } catch (error) {
+        console.error('Error uploading file pengembalian:', error);
+        showToast('Gagal mengupload bukti pengembalian: ' + (error.message || 'Silakan coba lagi'), 'error');
+        setFileNamePengembalian('');
+        setFileSizePengembalian(0);
+        setFormData(prev => ({ ...prev, lampiranPengembalian: null }));
+        e.target.value = '';
+      } finally {
+        setUploadingFilePengembalian(false);
+        setUploadProgressPengembalian(0);
+        setTimeout(() => setFileSizePengembalian(0), 1000);
       }
     }
   };
@@ -530,6 +682,12 @@ const Penyelesaian = () => {
         return;
       }
 
+      // Validasi bukti pengembalian jika metode Transfer
+      if (getStatusSelisih() === 'Pengembalian' && formData.metodePengembalian === 'Transfer' && !formData.lampiranPengembalian) {
+        showToast('Mohon upload bukti pengembalian ke finance untuk metode Transfer', 'error');
+        return;
+      }
+
       // Simpan ke Supabase
       const selisih = calculateSelisih();
       const statusSelisih = getStatusSelisih();
@@ -537,11 +695,13 @@ const Penyelesaian = () => {
 
       // Generate unique nomor penyelesaian at submit time to prevent conflicts
       const nomorPenyelesaian = generatePenyelesaianNumber();
+      const isBOD = userRole?.toLowerCase() === 'bod';
+      const isHRD = userRole?.toLowerCase() === 'hrd';
       const newPenyelesaianData = {
         nomor_penyelesaian: nomorPenyelesaian,
         nomor_kasbon: formData.nomorKasbon,
         nomor_ql: formData.nomorQl || null,
-        nama_event: formData.namaEvent || null, // Save nama_event
+        nama_event: formData.namaEvent || null,
         kasbon_nominal: parseFloat(formData.kasbonNominal),
         nama_karyawan: formData.namaKaryawan,
         detail_pengeluaran: formData.detailPengeluaran,
@@ -551,10 +711,12 @@ const Penyelesaian = () => {
         status_selisih: statusSelisih,
         metode_pengembalian: formData.metodePengembalian || null,
         lampiran: formData.lampiran || null,
+        lampiran_pengembalian: formData.lampiranPengembalian || null,
         keterangan: formData.keterangan || null,
-        status_approval: 'Pending',
-        disetujui_oleh: null,
-        status_penyelesaian: 'Belum Selesai'
+        status_approval: isBOD ? 'Approved' : 'Pending',
+        disetujui_oleh: isBOD ? userName : null,
+        status_penyelesaian: 'Belum Selesai',
+        is_confidential: isBOD || isHRD
       };
 
       const createdPenyelesaian = await createRecord('penyelesaian', newPenyelesaianData);
@@ -580,8 +742,8 @@ const Penyelesaian = () => {
         changedByName: userName
       });
 
-      await fetchPenyelesaian(); // Refresh data
-      await fetchKasbon(); // Refresh kasbon list to reflect updated status
+      await refreshData(); // Refresh halaman aktif + statistik (paginated)
+      await fetchKasbonLookup(); // Refresh kasbon lookup to reflect updated status
 
       setShowModal(false);
       // Reset form
@@ -594,9 +756,15 @@ const Penyelesaian = () => {
         detailPengeluaran: [],
         metodePengembalian: '',
         lampiran: null,
+        lampiranPengembalian: null,
         keterangan: '',
       });
       setFileName('');
+      setFileNamePengembalian('');
+      setFileSizePengembalian(0);
+      setNewExpenseItem({ deskripsi: '', nominal: '' });
+      setKasbonValidation({ isValid: null, message: '', isChecking: false });
+      clearPenyelesaianDraft();
       showToast('Penyelesaian berhasil ditambahkan', 'success');
     } catch (error) {
       console.error('Error adding penyelesaian:', error);
@@ -637,7 +805,7 @@ const Penyelesaian = () => {
             changedByName: userName
           });
           showToast('Penyelesaian berhasil disetujui', 'success');
-          await fetchPenyelesaian();
+          await refreshData();
           refreshNotifications();
         } catch (error) {
           console.error('Error approving penyelesaian:', error);
@@ -674,7 +842,7 @@ const Penyelesaian = () => {
             changedByName: userName
           });
           showToast('Penyelesaian berhasil ditolak', 'success');
-          await fetchPenyelesaian();
+          await refreshData();
           refreshNotifications();
         } catch (error) {
           console.error('Error rejecting penyelesaian:', error);
@@ -689,11 +857,13 @@ const Penyelesaian = () => {
     setFormData({
       nomorKasbon: penyelesaian.nomorKasbon || '',
       nomorQl: penyelesaian.nomorQl || '',
+      namaEvent: penyelesaian.namaEvent || '',
       kasbonNominal: penyelesaian.kasbonNominal || 0,
       namaKaryawan: penyelesaian.namaKaryawan || '',
       detailPengeluaran: penyelesaian.detailPengeluaran || [],
       metodePengembalian: penyelesaian.metodePengembalian || '',
       lampiran: penyelesaian.lampiran || null,
+      lampiranPengembalian: penyelesaian.lampiranPengembalian || null,
       keterangan: penyelesaian.keterangan || '',
     });
     setKasbonValidation({ isValid: true, message: 'Data dari penyelesaian yang diedit', isChecking: false });
@@ -724,7 +894,7 @@ const Penyelesaian = () => {
 
           await deleteRecord('penyelesaian', penyelesaian.id);
           showToast('Penyelesaian berhasil dihapus', 'success');
-          await fetchPenyelesaian();
+          await refreshData();
           refreshNotifications();
         } catch (error) {
           console.error('Error deleting penyelesaian:', error);
@@ -736,6 +906,13 @@ const Penyelesaian = () => {
 
   // Handle Mark as Selesai - Only for Finance
   const handleMarkSelesai = (penyelesaian) => {
+    // Jika status selisih = Kekurangan, harus upload bukti transfer kekurangan dulu
+    if (penyelesaian.statusSelisih === 'Kekurangan' && !penyelesaian.buktiKekurangan) {
+      setSelectedPenyelesaianForKekurangan(penyelesaian);
+      setShowBuktiKekuranganModal(true);
+      return;
+    }
+
     setConfirmDialog({
       isOpen: true,
       type: 'success',
@@ -761,7 +938,7 @@ const Penyelesaian = () => {
           });
 
           showToast('Penyelesaian berhasil ditandai selesai', 'success');
-          await fetchPenyelesaian();
+          await refreshData();
           refreshNotifications();
         } catch (error) {
           console.error('Error marking penyelesaian as complete:', error);
@@ -771,42 +948,53 @@ const Penyelesaian = () => {
     });
   };
 
-  // Filter dan Search
-  const getFilteredAndSearchedData = () => {
-    // Sort by newest first (based on Nomor Penyelesaian descending)
-    let filtered = [...penyelesaianRequests].sort((a, b) => {
-      const numA = parseInt(a.nomorPenyelesaian.split('-')[1]) || 0;
-      const numB = parseInt(b.nomorPenyelesaian.split('-')[1]) || 0;
-      return numB - numA;
-    });
+  // Handle Upload Bukti Kekurangan & Tandai Selesai dari table
+  const handleUploadBuktiKekuranganTable = async () => {
+    if (!selectedPenyelesaianForKekurangan || !buktiKekuranganFile) return;
 
-    if (filterStatus !== 'all') {
-      if (filterStatus === 'belum-selesai') {
-        filtered = filtered.filter(p => p.statusPenyelesaian === 'Belum Selesai');
-      } else if (filterStatus === 'selesai') {
-        filtered = filtered.filter(p => p.statusPenyelesaian === 'Selesai');
-      }
+    setIsUploadingBuktiKekurangan(true);
+    try {
+      // Upload file
+      const result = await uploadFile(buktiKekuranganFile, 'penyelesaian', selectedPenyelesaianForKekurangan.nomorPenyelesaian);
+
+      // Update record with bukti_kekurangan URL and mark as Selesai
+      await updateRecord('penyelesaian', selectedPenyelesaianForKekurangan.id, {
+        bukti_kekurangan: result.url,
+        status_penyelesaian: 'Selesai'
+      });
+
+      // Log activity
+      await logActivity({
+        tableName: 'penyelesaian',
+        recordId: selectedPenyelesaianForKekurangan.id,
+        recordNumber: selectedPenyelesaianForKekurangan.nomorPenyelesaian,
+        action: 'upload_bukti_kekurangan',
+        fieldChanged: 'bukti_kekurangan, status_penyelesaian',
+        oldValue: 'Belum Selesai',
+        newValue: 'Selesai (Bukti transfer kekurangan diupload)',
+        changedBy: userId,
+        changedByName: userName
+      });
+
+      showToast('Bukti transfer kekurangan berhasil diupload & penyelesaian ditandai selesai', 'success');
+      setShowBuktiKekuranganModal(false);
+      setBuktiKekuranganFile(null);
+      setSelectedPenyelesaianForKekurangan(null);
+      await refreshData();
+      refreshNotifications();
+    } catch (error) {
+      console.error('Error uploading bukti kekurangan:', error);
+      showToast('Gagal mengupload bukti transfer kekurangan', 'error');
+    } finally {
+      setIsUploadingBuktiKekurangan(false);
     }
-
-    if (searchTerm.trim()) {
-      const term = searchTerm.toLowerCase();
-      filtered = filtered.filter(p =>
-        p.nomorPenyelesaian.toLowerCase().includes(term) ||
-        p.nomorKasbon.toLowerCase().includes(term) ||
-        p.namaKaryawan.toLowerCase().includes(term)
-      );
-    }
-
-    return filtered;
   };
 
-  const filteredPenyelesaianRequests = getFilteredAndSearchedData();
-
-  // Pagination
-  const totalPages = Math.ceil(filteredPenyelesaianRequests.length / itemsPerPage);
-  const indexOfLastItem = currentPage * itemsPerPage;
-  const indexOfFirstItem = indexOfLastItem - itemsPerPage;
-  const currentItems = filteredPenyelesaianRequests.slice(indexOfFirstItem, indexOfLastItem);
+  // Data halaman aktif SUDAH difilter + dicari di server — tidak ada
+  // sort/filter/slice di browser lagi. totalCount/totalPages dari Supabase count.
+  const currentItems = penyelesaianRequests;
+  const indexOfLastItem = currentPage * ITEMS_PER_PAGE;
+  const indexOfFirstItem = (currentPage - 1) * ITEMS_PER_PAGE;
 
   const handlePageChange = (pageNumber) => {
     setCurrentPage(pageNumber);
@@ -815,12 +1003,10 @@ const Penyelesaian = () => {
 
   const handleFilterChange = (status) => {
     setFilterStatus(status);
-    setCurrentPage(1);
   };
 
   const handleSearchChange = (value) => {
     setSearchTerm(value);
-    setCurrentPage(1);
   };
 
   return (
@@ -870,7 +1056,7 @@ const Penyelesaian = () => {
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
             <input
               type="text"
-              placeholder="Cari berdasarkan Nomor Penyelesaian, Nomor Kasbon, atau Nama Karyawan..."
+              placeholder="Cari berdasarkan Nomor Penyelesaian, Nomor Kasbon, Nama Event, atau Nama Karyawan..."
               value={searchTerm}
               onChange={(e) => handleSearchChange(e.target.value)}
               className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
@@ -888,7 +1074,7 @@ const Penyelesaian = () => {
                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }`}
             >
-              Semua ({penyelesaianRequests.length})
+              Semua ({penyelesaianStats.total})
             </button>
             <button
               onClick={() => handleFilterChange('belum-selesai')}
@@ -897,7 +1083,7 @@ const Penyelesaian = () => {
                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }`}
             >
-              Belum Selesai ({penyelesaianRequests.filter(p => p.statusPenyelesaian === 'Belum Selesai').length})
+              Belum Selesai ({penyelesaianStats.belumSelesai})
             </button>
             <button
               onClick={() => handleFilterChange('selesai')}
@@ -906,7 +1092,7 @@ const Penyelesaian = () => {
                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }`}
             >
-              Selesai ({penyelesaianRequests.filter(p => p.statusPenyelesaian === 'Selesai').length})
+              Selesai ({penyelesaianStats.selesai})
             </button>
 
             {(filterStatus !== 'all' || searchTerm) && (
@@ -925,9 +1111,9 @@ const Penyelesaian = () => {
           {/* Result Info */}
           <div className="flex items-center justify-between text-sm">
             <p className="text-gray-600">
-              Menampilkan <span className="font-semibold text-gray-800">{indexOfFirstItem + 1}</span> - <span className="font-semibold text-gray-800">{Math.min(indexOfLastItem, filteredPenyelesaianRequests.length)}</span> dari <span className="font-semibold text-gray-800">{filteredPenyelesaianRequests.length}</span> penyelesaian
-              {filteredPenyelesaianRequests.length !== penyelesaianRequests.length && (
-                <span className="text-gray-500"> (Total: {penyelesaianRequests.length})</span>
+              Menampilkan <span className="font-semibold text-gray-800">{totalCount === 0 ? 0 : indexOfFirstItem + 1}</span> - <span className="font-semibold text-gray-800">{Math.min(indexOfLastItem, totalCount)}</span> dari <span className="font-semibold text-gray-800">{totalCount}</span> penyelesaian
+              {isLoadingPenyelesaian && (
+                <span className="text-gray-500"> (memuat...)</span>
               )}
             </p>
             {searchTerm && (
@@ -964,70 +1150,90 @@ const Penyelesaian = () => {
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {currentItems.length > 0 ? (
-                    currentItems.map((penyelesaian) => (
-                      <tr key={penyelesaian.nomorPenyelesaian} className="hover:bg-gray-50 transition-colors">
+                    currentItems.map((penyelesaian) => {
+                      const isHidden = penyelesaian.isConfidential && !canViewConfidential;
+                      return (
+                      <tr key={penyelesaian.nomorPenyelesaian} className={`hover:bg-gray-50 transition-colors ${isHidden ? 'bg-gray-50' : ''}`}>
                         <td className="py-4 px-6">
-                          <span className="text-sm font-bold text-amber-600">{penyelesaian.nomorPenyelesaian}</span>
+                          <button
+                            onClick={() => handleDetail(penyelesaian)}
+                            className="text-sm font-bold text-amber-600 hover:text-amber-800 hover:underline cursor-pointer"
+                          >
+                            {penyelesaian.isConfidential && (
+                              <span className="inline-flex items-center mr-1.5 text-amber-600" title="Confidential">
+                                <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" /></svg>
+                              </span>
+                            )}
+                            {penyelesaian.nomorPenyelesaian}
+                          </button>
                         </td>
                         <td className="py-4 px-6">
-                          <span className="text-sm font-medium text-emerald-600">{penyelesaian.nomorKasbon}</span>
+                          <span className="text-sm font-medium text-emerald-600">{isHidden ? '***' : penyelesaian.nomorKasbon}</span>
                         </td>
                         <td className="py-4 px-6">
                           <span className="text-sm text-gray-600">{penyelesaian.tanggal}</span>
                         </td>
                         <td className="py-4 px-6">
-                          <span className="text-sm text-gray-700 font-medium">{penyelesaian.namaKaryawan}</span>
+                          <span className="text-sm text-gray-700 font-medium">{isHidden ? 'CONFIDENTIAL' : penyelesaian.namaKaryawan}</span>
                         </td>
                         <td className="py-4 px-6 text-right">
-                          <span className="text-sm font-semibold text-gray-900">{formatRupiah(penyelesaian.kasbonNominal)}</span>
+                          <span className="text-sm font-semibold text-gray-900">{isHidden ? 'CONFIDENTIAL' : formatRupiah(penyelesaian.kasbonNominal)}</span>
                         </td>
                         <td className="py-4 px-6 text-right">
-                          <span className="text-sm font-semibold text-gray-900">{formatRupiah(penyelesaian.totalPengeluaran)}</span>
+                          <span className="text-sm font-semibold text-gray-900">{isHidden ? 'CONFIDENTIAL' : formatRupiah(penyelesaian.totalPengeluaran)}</span>
                         </td>
                         <td className="py-4 px-6 text-center">
-                          {getStatusSelisihBadge(penyelesaian.statusSelisih)}
+                          {isHidden ? <span className="text-xs text-gray-400">CONFIDENTIAL</span> : getStatusSelisihBadge(penyelesaian.statusSelisih)}
                         </td>
                         <td className="py-4 px-6 text-center">
-                          {penyelesaian.statusSelisih === 'Pengembalian' ? (
-                            penyelesaian.metodePengembalian === 'Transfer' ? (
-                              <div className="flex items-center justify-center space-x-1">
-                                <Banknote className="w-4 h-4 text-blue-600" />
-                                <span className="text-xs font-medium text-blue-700">Transfer</span>
-                              </div>
+                          {isHidden ? (
+                            <span className="text-xs text-gray-400">CONFIDENTIAL</span>
+                          ) : (
+                            penyelesaian.statusSelisih === 'Pengembalian' ? (
+                              penyelesaian.metodePengembalian === 'Transfer' ? (
+                                <div className="flex items-center justify-center space-x-1">
+                                  <Banknote className="w-4 h-4 text-blue-600" />
+                                  <span className="text-xs font-medium text-blue-700">Transfer</span>
+                                </div>
+                              ) : (
+                                <div className="flex items-center justify-center space-x-1">
+                                  <Wallet className="w-4 h-4 text-emerald-600" />
+                                  <span className="text-xs font-medium text-emerald-700">Cash</span>
+                                </div>
+                              )
                             ) : (
-                              <div className="flex items-center justify-center space-x-1">
-                                <Wallet className="w-4 h-4 text-emerald-600" />
-                                <span className="text-xs font-medium text-emerald-700">Cash</span>
-                              </div>
+                              <span className="text-xs text-gray-400">-</span>
                             )
-                          ) : (
-                            <span className="text-xs text-gray-400">-</span>
                           )}
                         </td>
                         <td className="py-4 px-6 text-center">
-                          {penyelesaian.lampiran ? (
-                            <a
-                              href={penyelesaian.lampiran}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex items-center justify-center space-x-1 hover:bg-emerald-50 p-1 rounded transition-colors"
-                              title="Lihat Lampiran"
-                            >
-                              <Paperclip className="w-4 h-4 text-emerald-600" />
-                              <span className="text-xs font-medium text-emerald-700">Ada</span>
-                            </a>
+                          {isHidden ? (
+                            <span className="text-xs text-gray-400">CONFIDENTIAL</span>
                           ) : (
-                            <span className="text-xs text-gray-400">-</span>
+                            penyelesaian.lampiran ? (
+                              <a
+                                href={penyelesaian.lampiran}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center justify-center space-x-1 hover:bg-emerald-50 p-1 rounded transition-colors"
+                                title="Lihat Lampiran"
+                              >
+                                <Paperclip className="w-4 h-4 text-emerald-600" />
+                                <span className="text-xs font-medium text-emerald-700">Ada</span>
+                              </a>
+                            ) : (
+                              <span className="text-xs text-gray-400">-</span>
+                            )
                           )}
                         </td>
                         <td className="py-4 px-6 text-center">
-                          {getStatusApprovalBadge(penyelesaian.statusApproval)}
+                          {isHidden ? <span className="text-xs text-gray-400">CONFIDENTIAL</span> : getStatusApprovalBadge(penyelesaian.statusApproval)}
                         </td>
                         <td className="py-4 px-6">
-                          <span className="text-sm text-gray-700">{penyelesaian.disetujuiOleh}</span>
+                          <span className="text-sm text-gray-700">{isHidden ? '***' : penyelesaian.disetujuiOleh}</span>
                         </td>
                         <td className="py-4 px-6 text-center">
-                          {getStatusPenyelesaianBadge(penyelesaian.statusPenyelesaian)}
+                          {isHidden ? <span className="text-xs text-gray-400">CONFIDENTIAL</span> : getStatusPenyelesaianBadge(penyelesaian.statusPenyelesaian)}
                         </td>
                         <td className="py-4 px-6">
                           <div className="flex items-center justify-center gap-2 flex-wrap">
@@ -1065,16 +1271,29 @@ const Penyelesaian = () => {
                             {isFinance && penyelesaian.statusApproval === 'Approved' && penyelesaian.statusPenyelesaian === 'Belum Selesai' && (
                               <button
                                 onClick={() => handleMarkSelesai(penyelesaian)}
-                                className="flex items-center space-x-1 px-3 py-1.5 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 transition-colors text-sm font-medium"
-                                title="Tandai Selesai"
+                                className={`flex items-center space-x-1 px-3 py-1.5 rounded-lg transition-colors text-sm font-medium ${
+                                  penyelesaian.statusSelisih === 'Kekurangan' && !penyelesaian.buktiKekurangan
+                                    ? 'bg-amber-50 text-amber-600 hover:bg-amber-100'
+                                    : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
+                                }`}
+                                title={penyelesaian.statusSelisih === 'Kekurangan' && !penyelesaian.buktiKekurangan ? 'Upload Bukti Kekurangan & Selesai' : 'Tandai Selesai'}
                               >
-                                <CheckCircle className="w-4 h-4" />
-                                <span>Selesai</span>
+                                {penyelesaian.statusSelisih === 'Kekurangan' && !penyelesaian.buktiKekurangan ? (
+                                  <>
+                                    <Upload className="w-4 h-4" />
+                                    <span>Selesai</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <CheckCircle className="w-4 h-4" />
+                                    <span>Selesai</span>
+                                  </>
+                                )}
                               </button>
                             )}
 
                             {/* Aksi Edit/Delete untuk Admin dan Manager */}
-                            {canDelete && (
+                            {canDelete && !isLocked(penyelesaian) && (
                               <>
                                 <button
                                   onClick={() => handleEdit(penyelesaian)}
@@ -1097,7 +1316,8 @@ const Penyelesaian = () => {
                           </div>
                         </td>
                       </tr>
-                    ))
+                    );
+                  })
                   ) : (
                     <tr>
                       <td colSpan="13" className="py-12 text-center">
@@ -1124,7 +1344,7 @@ const Penyelesaian = () => {
         </div>
 
         {/* Pagination */}
-        {filteredPenyelesaianRequests.length > 0 && totalPages > 1 && (
+        {totalCount > 0 && totalPages > 1 && (
           <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
             <div className="flex items-center justify-between">
               <div className="text-sm text-gray-600">
@@ -1218,7 +1438,7 @@ const Penyelesaian = () => {
               </div>
 
               <div className="text-sm text-gray-600">
-                {itemsPerPage} per halaman
+                {ITEMS_PER_PAGE} per halaman
               </div>
             </div>
           </div>
@@ -1337,6 +1557,7 @@ const Penyelesaian = () => {
                       disabled
                       className="w-full px-4 py-2.5 border border-gray-200 rounded-lg bg-gray-50 text-gray-600"
                     />
+                    <QLInfo value={formData.nomorQl} />
                     <p className="text-xs text-gray-500 mt-1">Otomatis dari kasbon</p>
                   </div>
 
@@ -1526,7 +1747,11 @@ const Penyelesaian = () => {
                       </button>
                       <button
                         type="button"
-                        onClick={() => setFormData(prev => ({ ...prev, metodePengembalian: 'Cash' }))}
+                        onClick={() => {
+                          setFormData(prev => ({ ...prev, metodePengembalian: 'Cash', lampiranPengembalian: null }));
+                          setFileNamePengembalian('');
+                          setFileSizePengembalian(0);
+                        }}
                         className={`flex items-center justify-center space-x-3 p-4 rounded-lg border-2 transition-all ${formData.metodePengembalian === 'Cash'
                           ? 'border-emerald-500 bg-emerald-100'
                           : 'border-blue-200 hover:border-blue-300 bg-white'
@@ -1541,6 +1766,96 @@ const Penyelesaian = () => {
                     <p className="text-xs text-blue-700 mt-3">
                       Sisa dana sebesar <span className="font-bold">Rp {formatRupiah(Math.abs(calculateSelisih()))}</span> akan dikembalikan ke Finance
                     </p>
+
+                    {/* Upload Bukti Pengembalian - Hanya muncul jika Transfer */}
+                    {formData.metodePengembalian === 'Transfer' && (
+                      <div className="mt-4 bg-amber-50 rounded-xl p-4 border border-amber-200">
+                        <label className="block text-sm font-semibold text-amber-800 mb-3">
+                          Lampiran Bukti Pengembalian ke Finance <span className="text-red-500">*</span>
+                        </label>
+                        <div className="flex flex-col space-y-3">
+                          <div className="flex items-center space-x-3">
+                            <label className={`flex-1 flex items-center justify-center space-x-3 px-4 py-3 border-2 border-dashed rounded-lg transition-colors ${uploadingFilePengembalian
+                              ? 'border-amber-300 bg-amber-100 cursor-wait'
+                              : 'border-amber-300 hover:border-amber-500 hover:bg-amber-100 cursor-pointer bg-white'
+                              }`}>
+                              <Paperclip className={`w-5 h-5 ${uploadingFilePengembalian ? 'text-amber-600 animate-pulse' : 'text-amber-500'}`} />
+                              <span className={`text-sm ${uploadingFilePengembalian ? 'text-amber-700 font-medium' : 'text-amber-600'}`}>
+                                {uploadingFilePengembalian ? 'Mengupload file...' : fileNamePengembalian ? fileNamePengembalian : 'Upload bukti transfer pengembalian'}
+                              </span>
+                              <input
+                                type="file"
+                                onChange={handleFilePengembalianChange}
+                                accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
+                                className="hidden"
+                                disabled={uploadingFilePengembalian}
+                              />
+                            </label>
+                            {fileNamePengembalian && !uploadingFilePengembalian && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setFileNamePengembalian('');
+                                  setFileSizePengembalian(0);
+                                  setFormData(prev => ({ ...prev, lampiranPengembalian: null }));
+                                }}
+                                className="p-2.5 bg-rose-50 text-rose-600 rounded-lg hover:bg-rose-100 transition-colors"
+                                title="Hapus file"
+                              >
+                                <X className="w-5 h-5" />
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Upload Progress */}
+                          {uploadingFilePengembalian && (
+                            <div className="bg-amber-100 border border-amber-300 rounded-lg p-4">
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="text-sm font-medium text-amber-700">Mengupload...</span>
+                                <span className="text-sm text-amber-600">{uploadProgressPengembalian}%</span>
+                              </div>
+                              <div className="w-full bg-amber-200 rounded-full h-2">
+                                <div
+                                  className="bg-amber-600 h-2 rounded-full transition-all duration-300"
+                                  style={{ width: `${uploadProgressPengembalian}%` }}
+                                ></div>
+                              </div>
+                              {fileSizePengembalian > 0 && (
+                                <p className="text-xs text-amber-600 mt-2">
+                                  Ukuran file: {formatFileSize(fileSizePengembalian)}
+                                </p>
+                              )}
+                            </div>
+                          )}
+
+                          {/* File Info */}
+                          {fileNamePengembalian && fileSizePengembalian > 0 && !uploadingFilePengembalian && (
+                            <div className="bg-white border border-amber-200 rounded-lg p-3">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center space-x-2">
+                                  <FileText className="w-4 h-4 text-amber-600" />
+                                  <span className="text-sm font-medium text-amber-700">{fileNamePengembalian}</span>
+                                </div>
+                                <span className="text-xs text-amber-500">{formatFileSize(fileSizePengembalian)}</span>
+                              </div>
+                            </div>
+                          )}
+
+                          <p className="text-xs text-amber-600">
+                            Upload bukti transfer pengembalian dana ke Finance (Format: PDF, Word, Excel, atau Gambar - Max 10MB)
+                          </p>
+
+                          {formData.lampiranPengembalian && !uploadingFilePengembalian && (
+                            <div className="flex items-center space-x-2 p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
+                              <div className="w-5 h-5 bg-emerald-600 rounded-full flex items-center justify-center flex-shrink-0">
+                                <span className="text-white text-xs font-bold">✓</span>
+                              </div>
+                              <span className="text-sm font-medium text-emerald-700">Bukti pengembalian berhasil diupload</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -1700,6 +2015,111 @@ const Penyelesaian = () => {
         }}
         onCancel={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
       />
+
+      {/* Modal Upload Bukti Transfer Kekurangan */}
+      {showBuktiKekuranganModal && selectedPenyelesaianForKekurangan && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="flex-shrink-0 flex items-center justify-between p-6 border-b border-gray-200 bg-gradient-to-r from-amber-600 to-amber-700 rounded-t-2xl">
+              <div className="flex items-center space-x-3">
+                <div className="p-2 bg-white/20 rounded-lg">
+                  <Upload className="w-6 h-6 text-white" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white">Upload Bukti Transfer Kekurangan</h3>
+                  <p className="text-sm text-white/80">{selectedPenyelesaianForKekurangan.nomorPenyelesaian}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setShowBuktiKekuranganModal(false);
+                  setBuktiKekuranganFile(null);
+                  setSelectedPenyelesaianForKekurangan(null);
+                }}
+                className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5 text-white" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              {/* Info Penyelesaian */}
+              <div className="bg-gray-50 rounded-lg p-4">
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <span className="text-gray-500">Karyawan:</span>
+                    <p className="font-medium text-gray-800">{selectedPenyelesaianForKekurangan.namaKaryawan || '-'}</p>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">Nominal Kekurangan:</span>
+                    <p className="font-semibold text-amber-600">Rp {new Intl.NumberFormat('id-ID').format(Math.abs(selectedPenyelesaianForKekurangan.selisih || 0))}</p>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">Kasbon:</span>
+                    <p className="font-medium text-gray-800">Rp {new Intl.NumberFormat('id-ID').format(selectedPenyelesaianForKekurangan.kasbonNominal || 0)}</p>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">Total Pengeluaran:</span>
+                    <p className="font-medium text-gray-800">Rp {new Intl.NumberFormat('id-ID').format(selectedPenyelesaianForKekurangan.totalPengeluaran || 0)}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Info Kekurangan */}
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                <p className="text-sm text-amber-800">
+                  Karyawan mengeluarkan lebih dari kasbon yang diberikan. Silakan transfer kekurangan sebesar <strong>Rp {new Intl.NumberFormat('id-ID').format(Math.abs(selectedPenyelesaianForKekurangan.selisih || 0))}</strong> dan upload bukti transfernya untuk menandai penyelesaian ini selesai.
+                </p>
+              </div>
+
+              {/* Upload Area */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Lampiran Bukti Transfer yang Kekurangan <span className="text-red-500">*</span>
+                </label>
+                <PasteUpload
+                  onFileSelect={(file) => setBuktiKekuranganFile(file)}
+                  accept=".pdf,.jpg,.jpeg,.png"
+                  maxSize={10}
+                />
+              </div>
+
+              {/* Buttons */}
+              <div className="flex items-center justify-end space-x-3 pt-4 border-t border-gray-200">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowBuktiKekuranganModal(false);
+                    setBuktiKekuranganFile(null);
+                    setSelectedPenyelesaianForKekurangan(null);
+                  }}
+                  disabled={isUploadingBuktiKekurangan}
+                  className="px-6 py-2.5 border border-gray-200 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition-colors disabled:opacity-50"
+                >
+                  Batal
+                </button>
+                <button
+                  onClick={handleUploadBuktiKekuranganTable}
+                  disabled={!buktiKekuranganFile || isUploadingBuktiKekurangan}
+                  className={`px-6 py-2.5 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700 transition-colors shadow-sm flex items-center space-x-2 ${(!buktiKekuranganFile || isUploadingBuktiKekurangan) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                  {isUploadingBuktiKekurangan ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Mengupload...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle className="w-4 h-4" />
+                      <span>Upload & Tandai Selesai</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

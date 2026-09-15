@@ -46,19 +46,28 @@ Cloudflare Pages adalah platform hosting gratis untuk aplikasi frontend statis (
    - Authorize Cloudflare untuk akses repository
    - Pilih repository yang berisi frontend code
 
-5. **Configure Build Settings**
-   - **Project name**: `finance-prasasti` (atau nama lain)
-   - **Production branch**: `main` (atau `master`)
-   - **Build command**: `npm run build`
-   - **Build output directory**: `dist`
-   - **Root directory**: `/` (atau folder frontend jika monorepo)
+5. **Configure Build Settings** (monorepo — root harus folder frontend)
+    - **Project name**: `finance-v3` (project yang sudah ada)
+    - **Production branch**: `main`
+    - **Framework preset**: Vite
+    - **Root directory**: `frontend`
+    - **Build command**: `npm run build`
+    - **Build output directory**: `dist`
 
-6. **Environment Variables**
-   - Klik **"Add variable"** untuk setiap environment variable:
-     - `VITE_SUPABASE_URL`
-     - `VITE_SUPABASE_ANON_KEY`
-     - `VITE_R2_WORKER_URL` (atau `VITE_WASABI_WORKER_URL`)
-     - `VITE_WASABI_PUBLIC_URL` (optional)
+6. **Environment Variables** (dibakar saat build — wajib Redeploy tiap ubah)
+    - Klik **"Add variable"** untuk setiap environment variable, untuk **Production** (dan Preview bila perlu):
+      - `VITE_SUPABASE_URL` = `https://db-finance.prasastigroup.id`
+      - `VITE_SUPABASE_ANON_KEY` = (isi dari dashboard Supabase)
+      - `VITE_R2_WORKER_URL` = `https://finance-v3-upload.ranggadhisesa.workers.dev`
+      - `VITE_EMAIL_NOTIFICATION_URL` = `https://finance-v3-email.ranggadhisesa.workers.dev`
+      - `VITE_TURNSTILE_SITEKEY` = `0x4AAAAAAE1FPMavLq99krrk`
+      - `VITE_TURNSTILE_VERIFY_URL` = `https://turnstile-siteverify-finance-v3.ranggadhisesa.workers.dev`
+      - `VITE_TURNSTILE_GATE_TTL_DAYS` = `30`
+      - `VITE_BACKEND_URL` = URL publik backend Express (mis. `https://api.domain-anda.com`).
+        **KOSONGKAN dulu** bila backend belum deploy — bila diisi tapi backend
+        mati/tak terjangkau, login akan fail-closed (tidak bisa masuk).
+    - **Hapus** variabel lama yang sudah tidak dipakai: `VITE_PRASASTI_API_URL`,
+      `VITE_SESSION_IDLE_MINUTES`, `VITE_SESSION_MAX_MINUTES`.
 
 7. **Deploy**
    - Klik **"Save and Deploy"**

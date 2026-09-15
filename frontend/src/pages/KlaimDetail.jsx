@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Printer, FileText, Calendar, User, DollarSign, CheckCircle, XCircle, Banknote, Wallet, Eye, Download, Loader2, Upload, X } from 'lucide-react';
+import { ArrowLeft, Printer, FileText, Calendar, User, DollarSign, CheckCircle, XCircle, Banknote, Wallet, Eye, Download, FileSpreadsheet, Loader2, Upload, X, Briefcase } from 'lucide-react';
 import { getRecordById, updateRecord, uploadFile } from '../lib/api';
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
@@ -8,9 +8,13 @@ import { useNotification } from '../context/NotificationContext';
 import { logActivity } from '../lib/auditLog';
 import TipeBadge from '../components/TipeBadge';
 import IdPerusahaanBadge from '../components/IdPerusahaanBadge';
+import QLLink from '../components/QLLink';
 import ConfirmModal from '../components/ConfirmModal';
 import PasteUpload from '../components/PasteUpload';
 import jsPDF from 'jspdf';
+import { sendTransferNotification } from '../lib/emailNotifications';
+import { exportKlaimDetailExcel } from '../utils/detailExcelExport';
+import { exportKlaimDetailPdf } from '../utils/detailPdfExport';
 
 const KlaimDetail = () => {
     const { id } = useParams();
@@ -22,6 +26,7 @@ const KlaimDetail = () => {
     const [isLoading, setIsLoading] = useState(true);
     const [isApproving, setIsApproving] = useState(false);
     const [confirmModal, setConfirmModal] = useState({ isOpen: false, type: null });
+    const [isExportingPdf, setIsExportingPdf] = useState(false);
 
     // Transfer states for team_finance
     const [showTransferModal, setShowTransferModal] = useState(false);
@@ -30,7 +35,7 @@ const KlaimDetail = () => {
 
     const canApprove = ['administrator', 'bod', 'manager'].includes(userRole);
     const canTransfer = userRole === 'team_finance';
-    const canViewConfidential = ['administrator', 'bod', 'team_finance'].includes(userRole?.toLowerCase());
+    const canViewConfidential = ['administrator', 'bod', 'team_finance', 'hrd'].includes(userRole?.toLowerCase());
 
     useEffect(() => {
         const fetchKlaimDetail = async () => {
@@ -149,6 +154,15 @@ const KlaimDetail = () => {
                 newValue: 'Sudah Transfer',
                 changedBy: userId,
                 changedByName: userName
+            });
+
+            await sendTransferNotification({
+                tableName: 'klaim',
+                record: klaim,
+                amount: klaim.nominal,
+                proofUrl: result.url,
+                transferredBy: userName,
+                detailPath: `/klaim/${klaim.id}`
             });
 
             showToast('Bukti transfer berhasil diupload', 'success');
@@ -270,6 +284,7 @@ const KlaimDetail = () => {
         addField('Nama Karyawan', klaim.nama_karyawan || '-');
         addField('Tipe', klaim.tipe || '-');
         addField('ID Perusahaan', klaim.id_perusahaan || '-');
+        addField('Nama Event/Project', klaim.nama_event || '-');
 
         yPos += 5;
 
@@ -419,6 +434,33 @@ const KlaimDetail = () => {
         doc.save(`Klaim-${klaim.nomor_klaim}.pdf`);
     };
 
+    const handleExportExcel = () => {
+        if (!klaim) return;
+
+        try {
+            exportKlaimDetailExcel(klaim);
+            showToast('Excel detail Klaim berhasil diexport', 'success');
+        } catch (error) {
+            console.error('Error exporting Klaim Excel:', error);
+            showToast('Gagal export Excel Klaim', 'error');
+        }
+    };
+
+    const handleExportPDFModern = async () => {
+        if (!klaim || isExportingPdf) return;
+
+        try {
+            setIsExportingPdf(true);
+            await exportKlaimDetailPdf(klaim);
+            showToast('PDF detail Klaim berhasil diexport', 'success');
+        } catch (error) {
+            console.error('Error exporting Klaim PDF:', error);
+            showToast('Gagal export PDF Klaim', 'error');
+        } finally {
+            setIsExportingPdf(false);
+        }
+    };
+
     if (isLoading) {
         return (
             <div className="min-h-screen flex items-center justify-center">
@@ -515,11 +557,19 @@ const KlaimDetail = () => {
                     </div>
                     <div className="flex items-center space-x-3">
                         <button
-                            onClick={handleExportPDF}
-                            className="px-4 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-colors flex items-center space-x-2"
+                            onClick={handleExportExcel}
+                            className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors flex items-center space-x-2"
                         >
-                            <Download className="w-5 h-5" />
-                            <span className="hidden sm:inline">Export PDF</span>
+                            <FileSpreadsheet className="w-5 h-5" />
+                            <span className="hidden sm:inline">Export Excel</span>
+                        </button>
+                        <button
+                            onClick={handleExportPDFModern}
+                            disabled={isExportingPdf}
+                            className="px-4 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-colors flex items-center space-x-2 disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                            {isExportingPdf ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
+                            <span className="hidden sm:inline">{isExportingPdf ? 'Exporting...' : 'Export PDF'}</span>
                         </button>
                         <button
                             onClick={() => window.print()}
@@ -546,7 +596,7 @@ const KlaimDetail = () => {
                             </div>
                             <div>
                                 <p className="text-sm text-gray-600">Nomor QL</p>
-                                <p className="text-lg font-bold text-gray-800">{klaim.nomor_ql || '-'}</p>
+                                <p className="text-lg font-bold text-gray-800"><QLLink ql={klaim.nomor_ql} linkClassName="text-violet-600" /></p>
                             </div>
                         </div>
                     </div>
@@ -569,7 +619,7 @@ const KlaimDetail = () => {
                                 </div>
                                 <div>
                                     <label className="text-sm text-gray-500">Nomor QL</label>
-                                    <p className="text-base font-semibold text-gray-800">{klaim.nomor_ql || '-'}</p>
+                                    <p className="text-base font-semibold text-gray-800"><QLLink ql={klaim.nomor_ql} linkClassName="text-violet-600" /></p>
                                 </div>
                                 <div>
                                     <label className="text-sm text-gray-500">Tanggal</label>
@@ -596,6 +646,13 @@ const KlaimDetail = () => {
                                     <div className="mt-1">
                                         <IdPerusahaanBadge idPerusahaan={klaim.id_perusahaan} />
                                     </div>
+                                </div>
+                                <div className="sm:col-span-2">
+                                    <label className="text-sm text-gray-500">Nama Event/Project</label>
+                                    <p className="text-base text-gray-800 flex items-center space-x-2 mt-1">
+                                        <Briefcase className="w-4 h-4 text-gray-400" />
+                                        <span>{klaim.nama_event || '-'}</span>
+                                    </p>
                                 </div>
                             </div>
                         </div>
@@ -691,17 +748,43 @@ const KlaimDetail = () => {
                         {klaim.lampiran && (
                             <div className="card">
                                 <h2 className="text-lg font-bold text-gray-800 mb-4">Lampiran</h2>
-                                <a
-                                    href={klaim.lampiran}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="inline-flex items-center px-4 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors"
-                                >
-                                    <Eye className="w-4 h-4 mr-2" />
-                                    Lihat Lampiran
-                                </a>
+                                {(() => {
+                                    // Parse lampiran - could be JSON array or single URL string
+                                    let lampiranList = [];
+                                    try {
+                                        if (typeof klaim.lampiran === 'string') {
+                                            if (klaim.lampiran.startsWith('[')) {
+                                                lampiranList = JSON.parse(klaim.lampiran);
+                                            } else {
+                                                lampiranList = [klaim.lampiran];
+                                            }
+                                        } else if (Array.isArray(klaim.lampiran)) {
+                                            lampiranList = klaim.lampiran;
+                                        }
+                                    } catch (e) {
+                                        lampiranList = [klaim.lampiran];
+                                    }
+
+                                    return (
+                                        <div className="space-y-2">
+                                            {lampiranList.map((url, index) => (
+                                                <a
+                                                    key={index}
+                                                    href={url}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="flex items-center px-4 py-2 bg-violet-50 text-violet-600 rounded-lg hover:bg-violet-100 transition-colors"
+                                                >
+                                                    <Eye className="w-4 h-4 mr-2" />
+                                                    <span className="truncate">Lampiran {lampiranList.length > 1 ? index + 1 : ''}</span>
+                                                </a>
+                                            ))}
+                                        </div>
+                                    );
+                                })()}
                             </div>
                         )}
+
                     </div>
 
                     {/* Sidebar */}

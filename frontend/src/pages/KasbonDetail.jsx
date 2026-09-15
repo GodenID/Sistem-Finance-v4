@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Printer, FileText, Calendar, User, DollarSign, CheckCircle, XCircle, Banknote, Wallet, Download, Loader2, Upload, X } from 'lucide-react';
+import { ArrowLeft, Printer, FileText, Calendar, User, DollarSign, CheckCircle, XCircle, Banknote, Wallet, Download, FileSpreadsheet, Loader2, Upload, X, Briefcase } from 'lucide-react';
 import { getRecordById, updateRecord, uploadFile } from '../lib/api';
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
@@ -8,9 +8,13 @@ import { useNotification } from '../context/NotificationContext';
 import { logActivity } from '../lib/auditLog';
 import TipeBadge from '../components/TipeBadge';
 import IdPerusahaanBadge from '../components/IdPerusahaanBadge';
+import QLLink from '../components/QLLink';
 import ConfirmModal from '../components/ConfirmModal';
 import PasteUpload from '../components/PasteUpload';
 import jsPDF from 'jspdf';
+import { sendTransferNotification } from '../lib/emailNotifications';
+import { exportKasbonDetailExcel } from '../utils/detailExcelExport';
+import { exportKasbonDetailPdf } from '../utils/detailPdfExport';
 
 const KasbonDetail = () => {
     const { id } = useParams();
@@ -22,6 +26,7 @@ const KasbonDetail = () => {
     const [isLoading, setIsLoading] = useState(true);
     const [isApproving, setIsApproving] = useState(false);
     const [confirmModal, setConfirmModal] = useState({ isOpen: false, type: null });
+    const [isExportingPdf, setIsExportingPdf] = useState(false);
 
     // Transfer states for team_finance
     const [showTransferModal, setShowTransferModal] = useState(false);
@@ -30,6 +35,7 @@ const KasbonDetail = () => {
 
     const canApprove = ['administrator', 'bod', 'manager'].includes(userRole);
     const canTransfer = userRole === 'team_finance';
+    const canViewConfidential = ['administrator', 'bod', 'team_finance', 'hrd'].includes(userRole?.toLowerCase());
 
     useEffect(() => {
         const fetchKasbonDetail = async () => {
@@ -148,6 +154,15 @@ const KasbonDetail = () => {
                 newValue: 'Sudah Transfer',
                 changedBy: userId,
                 changedByName: userName
+            });
+
+            await sendTransferNotification({
+                tableName: 'kasbon',
+                record: kasbon,
+                amount: kasbon.nominal,
+                proofUrl: result.url,
+                transferredBy: userName,
+                detailPath: `/kasbon/${kasbon.id}`
             });
 
             showToast('Bukti transfer berhasil diupload', 'success');
@@ -269,6 +284,7 @@ const KasbonDetail = () => {
         addField('Nama Karyawan', kasbon.nama_karyawan || '-');
         addField('Tipe', kasbon.tipe || '-');
         addField('ID Perusahaan', kasbon.id_perusahaan || '-');
+        addField('Nama Event/Project', kasbon.nama_event || '-');
 
         yPos += 5;
 
@@ -362,6 +378,33 @@ const KasbonDetail = () => {
         doc.save(`Kasbon-${kasbon.nomor_kasbon}.pdf`);
     };
 
+    const handleExportExcel = () => {
+        if (!kasbon) return;
+
+        try {
+            exportKasbonDetailExcel(kasbon);
+            showToast('Excel detail Kasbon berhasil diexport', 'success');
+        } catch (error) {
+            console.error('Error exporting Kasbon Excel:', error);
+            showToast('Gagal export Excel Kasbon', 'error');
+        }
+    };
+
+    const handleExportPDFModern = async () => {
+        if (!kasbon || isExportingPdf) return;
+
+        try {
+            setIsExportingPdf(true);
+            await exportKasbonDetailPdf(kasbon);
+            showToast('PDF detail Kasbon berhasil diexport', 'success');
+        } catch (error) {
+            console.error('Error exporting Kasbon PDF:', error);
+            showToast('Gagal export PDF Kasbon', 'error');
+        } finally {
+            setIsExportingPdf(false);
+        }
+    };
+
     if (isLoading) {
         return (
             <div className="min-h-screen flex items-center justify-center">
@@ -383,6 +426,29 @@ const KasbonDetail = () => {
                         className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700"
                     >
                         Kembali
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+    // Check if user can view confidential data
+    if (kasbon.is_confidential && !canViewConfidential) {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-gray-50">
+                <div className="text-center max-w-md mx-auto p-8">
+                    <div className="w-20 h-20 bg-gray-800 rounded-full flex items-center justify-center mx-auto mb-6">
+                        <span className="text-4xl">🔒</span>
+                    </div>
+                    <h2 className="text-2xl font-bold text-gray-800 mb-2">Akses Ditolak</h2>
+                    <p className="text-gray-600 mb-6">
+                        Data ini bersifat <strong>CONFIDENTIAL</strong> dan hanya dapat diakses oleh pihak yang berwenang.
+                    </p>
+                    <button
+                        onClick={() => navigate('/kasbon')}
+                        className="px-6 py-3 bg-gray-800 text-white rounded-lg hover:bg-gray-900 transition-colors font-medium"
+                    >
+                        Kembali ke Daftar
                     </button>
                 </div>
             </div>
@@ -435,11 +501,19 @@ const KasbonDetail = () => {
                     </div>
                     <div className="flex items-center space-x-3">
                         <button
-                            onClick={handleExportPDF}
-                            className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors flex items-center space-x-2"
+                            onClick={handleExportExcel}
+                            className="px-4 py-2 bg-emerald-700 text-white rounded-lg hover:bg-emerald-800 transition-colors flex items-center space-x-2"
                         >
-                            <Download className="w-5 h-5" />
-                            <span className="hidden sm:inline">Export PDF</span>
+                            <FileSpreadsheet className="w-5 h-5" />
+                            <span className="hidden sm:inline">Export Excel</span>
+                        </button>
+                        <button
+                            onClick={handleExportPDFModern}
+                            disabled={isExportingPdf}
+                            className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors flex items-center space-x-2 disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                            {isExportingPdf ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
+                            <span className="hidden sm:inline">{isExportingPdf ? 'Exporting...' : 'Export PDF'}</span>
                         </button>
                         <button
                             onClick={() => window.print()}
@@ -466,7 +540,7 @@ const KasbonDetail = () => {
                             </div>
                             <div>
                                 <p className="text-sm text-gray-600">Nomor QL</p>
-                                <p className="text-lg font-bold text-gray-800">{kasbon.nomor_ql || '-'}</p>
+                                <p className="text-lg font-bold text-gray-800"><QLLink ql={kasbon.nomor_ql} linkClassName="text-emerald-600" /></p>
                             </div>
                         </div>
                     </div>
@@ -489,7 +563,7 @@ const KasbonDetail = () => {
                                 </div>
                                 <div>
                                     <label className="text-sm text-gray-500">Nomor QL</label>
-                                    <p className="text-base font-semibold text-gray-800">{kasbon.nomor_ql || '-'}</p>
+                                    <p className="text-base font-semibold text-gray-800"><QLLink ql={kasbon.nomor_ql} linkClassName="text-emerald-600" /></p>
                                 </div>
                                 <div>
                                     <label className="text-sm text-gray-500">Tanggal</label>
@@ -516,6 +590,13 @@ const KasbonDetail = () => {
                                     <div className="mt-1">
                                         <IdPerusahaanBadge idPerusahaan={kasbon.id_perusahaan} />
                                     </div>
+                                </div>
+                                <div className="sm:col-span-2">
+                                    <label className="text-sm text-gray-500">Nama Event/Project</label>
+                                    <p className="text-base text-gray-800 flex items-center space-x-2 mt-1">
+                                        <Briefcase className="w-4 h-4 text-gray-400" />
+                                        <span>{kasbon.nama_event || '-'}</span>
+                                    </p>
                                 </div>
                             </div>
                         </div>

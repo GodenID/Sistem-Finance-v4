@@ -1,13 +1,20 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
 import { Wallet, Eye, EyeOff, Lock, User, LogIn, AlertCircle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { useAppVersion } from '../lib/version';
+import { getMaintenanceMode } from '../lib/api';
+import {
+  checkLoginAllowed,
+  recordLoginFailure,
+  recordLoginSuccess,
+  formatRetry,
+} from '../lib/guard';
 
 const Login = () => {
   const navigate = useNavigate();
-  const { login } = useAuth();
+  const { login, logout } = useAuth();
   const { showToast } = useToast();
   const appVersion = useAppVersion();
   const [showPassword, setShowPassword] = useState(false);
@@ -17,6 +24,19 @@ const Login = () => {
   });
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  // Rate-limit client-side (anti-bruteforce) — proteksi bot utama kini via
+  // Turnstile gate kunjungan (SiteGate), bukan captcha di form.
+  const [lockInfo, setLockInfo] = useState({ allowed: true, retryAfterSec: 0, remaining: 5 });
+
+  // Countdown timer saat akun terkunci (rate-limit)
+  useEffect(() => {
+    if (lockInfo.allowed) return;
+    const t = setInterval(() => {
+      setLockInfo(checkLoginAllowed(formData.username));
+    }, 1000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lockInfo.allowed, formData.username]);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -25,28 +45,62 @@ const Login = () => {
       [name]: value
     }));
     setError(''); // Clear error saat user mulai mengetik
+    if (name === 'username') {
+      setLockInfo(checkLoginAllowed(value));
+    }
   };
 
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    // 1. Rate-limit client-side: tolak percobaan saat terkunci
+    const allowed = checkLoginAllowed(formData.username);
+    setLockInfo(allowed);
+    if (!allowed.allowed) {
+      const msg = `Terlalu banyak percobaan gagal. Coba lagi dalam ${formatRetry(allowed.retryAfterSec)}.`;
+      setError(msg);
+      showToast(msg, 'error');
+      return;
+    }
+
     setIsLoading(true);
     setError('');
 
     try {
-      // Login menggunakan API backend
-      await login({
+      // Login menggunakan API backend (proteksi bot via SiteGate Turnstile)
+      const result = await login({
         username: formData.username,
-        password: formData.password
+        password: formData.password,
       });
+      recordLoginSuccess(formData.username);
+
+      // Cek maintenance mode setelah login
+      const isMaintenance = await getMaintenanceMode();
+      const userRole = result.user?.role || localStorage.getItem('userRole');
+
+      if (isMaintenance && userRole?.toLowerCase() !== 'administrator') {
+        // Logout user non-admin saat maintenance
+        await logout();
+        setError('Sistem sedang dalam mode maintenance. Silakan coba lagi nanti.');
+        showToast('Sistem sedang maintenance', 'error');
+        return;
+      }
 
       showToast('Login berhasil', 'success');
       navigate('/');
     } catch (err) {
       console.error('Login error:', err);
-      const errorMessage = err.response?.data?.error || err.error || 'Terjadi kesalahan saat login. Silakan coba lagi.';
-      setError(errorMessage);
-      showToast(errorMessage, 'error');
+      const afterFail = recordLoginFailure(formData.username);
+      setLockInfo(afterFail);
+      const errorMessage = err.response?.data?.error || err.error || err.message || 'Terjadi kesalahan saat login. Silakan coba lagi.';
+      const suffix = !afterFail.allowed
+        ? ` Coba lagi dalam ${formatRetry(afterFail.retryAfterSec)}.`
+        : afterFail.remaining <= 2
+          ? ` Sisa percobaan: ${afterFail.remaining}x sebelum terkunci sementara.`
+          : '';
+      setError(errorMessage + suffix);
+      showToast(errorMessage + suffix, 'error');
     } finally {
       setIsLoading(false);
     }
@@ -97,6 +151,16 @@ const Login = () => {
               <div className="mb-6 flex items-center space-x-2 p-4 bg-rose-50 border border-rose-200 rounded-lg text-rose-700">
                 <AlertCircle className="w-5 h-5 flex-shrink-0" />
                 <span className="text-sm">{error}</span>
+              </div>
+            )}
+
+            {/* Lockout Alert (rate-limit anti-bruteforce) */}
+            {!lockInfo.allowed && (
+              <div className="mb-6 flex items-center space-x-2 p-4 bg-amber-50 border border-amber-200 rounded-lg text-amber-800">
+                <Lock className="w-5 h-5 flex-shrink-0" />
+                <span className="text-sm">
+                  Terlalu banyak percobaan gagal. Coba lagi dalam {formatRetry(lockInfo.retryAfterSec)}.
+                </span>
               </div>
             )}
 
@@ -163,15 +227,15 @@ const Login = () => {
                   />
                   <span className="ml-2 text-sm text-gray-600">Ingat saya</span>
                 </label>
-                <a href="#" className="text-sm font-medium text-primary-600 hover:text-primary-700 transition-colors">
+                <Link to="/forgot-password" className="text-sm font-medium text-primary-600 hover:text-primary-700 transition-colors">
                   Lupa password?
-                </a>
+                </Link>
               </div>
 
               {/* Login Button */}
               <button
                 type="submit"
-                disabled={isLoading}
+                disabled={isLoading || !lockInfo.allowed}
                 className="w-full bg-gradient-to-r from-primary-500 to-primary-600 text-white py-3 rounded-lg font-semibold hover:from-primary-600 hover:to-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
               >
                 {isLoading ? (

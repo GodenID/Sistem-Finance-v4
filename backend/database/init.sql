@@ -10,7 +10,10 @@ CREATE TABLE IF NOT EXISTS users (
     username VARCHAR(50) UNIQUE NOT NULL,
     password VARCHAR(255) NOT NULL,
     name VARCHAR(100) NOT NULL,
-    role VARCHAR(50) NOT NULL CHECK (role IN ('administrator', 'team_finance', 'bod', 'staff', 'manager', 'guest')),
+    email VARCHAR(255),
+    email_notifications_enabled BOOLEAN DEFAULT true,
+    status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'suspended')),
+    role VARCHAR(50) NOT NULL CHECK (role IN ('administrator', 'team_finance', 'bod', 'hrd', 'staff', 'manager', 'guest')),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE
 );
@@ -46,6 +49,7 @@ CREATE TABLE IF NOT EXISTS payment_requests (
     status_approval VARCHAR(20) DEFAULT 'Pending' CHECK (status_approval IN ('Pending', 'Approved', 'Rejected')),
     disetujui_oleh VARCHAR(255),
     nama_karyawan VARCHAR(255),
+    is_confidential BOOLEAN DEFAULT false,
     created_by UUID REFERENCES users(id) ON DELETE SET NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE
@@ -69,6 +73,7 @@ CREATE TABLE IF NOT EXISTS kasbon (
     status_approval VARCHAR(20) DEFAULT 'Pending' CHECK (status_approval IN ('Pending', 'Approved', 'Rejected')),
     status_transfer VARCHAR(20) DEFAULT 'Belum Transfer' CHECK (status_transfer IN ('Belum Transfer', 'Sudah Transfer', 'Reject')),
     disetujui_oleh UUID REFERENCES users(id) ON DELETE SET NULL,
+    is_confidential BOOLEAN DEFAULT false,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE
 );
@@ -92,6 +97,7 @@ CREATE TABLE IF NOT EXISTS klaim (
     status_approval VARCHAR(20) DEFAULT 'Pending' CHECK (status_approval IN ('Pending', 'Approved', 'Rejected')),
     status_transfer VARCHAR(20) DEFAULT 'Belum Transfer' CHECK (status_transfer IN ('Belum Transfer', 'Sudah Transfer', 'Reject')),
     disetujui_oleh UUID REFERENCES users(id) ON DELETE SET NULL,
+    is_confidential BOOLEAN DEFAULT false,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE
 );
@@ -107,6 +113,7 @@ CREATE TABLE IF NOT EXISTS penyelesaian (
     total_nominal DECIMAL(15, 2) NOT NULL,
     breakdown JSONB,
     keterangan TEXT,
+    is_confidential BOOLEAN DEFAULT false,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE
 );

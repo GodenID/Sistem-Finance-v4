@@ -19,7 +19,10 @@ export default defineConfig({
           // UI Components & Icons
           'vendor-ui': ['lucide-react', 'recharts'],
           // Heavy libraries (PDF & Excel)
-          'vendor-utils': ['jspdf', 'xlsx', 'jszip', 'file-saver'],
+          // NOTE (FIX #5): 'xlsx' sengaja TIDAK dicantumkan agar hasil
+          // `await import('xlsx')` menjadi chunk on-demand tersendiri,
+          // bukan ikut vendor-utils yang dimuat di awal rute.
+          'vendor-utils': ['jspdf', 'jszip', 'file-saver'],
           // Backend/Data handling
           'vendor-data': ['@supabase/supabase-js', 'axios']
         }

@@ -34,12 +34,32 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3001
-      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:-your_secure_password}@postgres:5432/finance_db
-      JWT_SECRET: ${JWT_SECRET:-change-this-in-production}
-      JWT_EXPIRES_IN: 7d
+      # PENTING: harus menunjuk ke database yang SAMA dengan frontend
+      # (Postgres Supabase self-hosted tempat tabel users berada).
+      # Contoh: postgresql://postgres:PASSWORD@db-finance.prasastigroup.id:5432/postgres
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:${DB_PASSWORD:-your_secure_password}@postgres:5432/finance_db}
+      # WAJIB diisi (min. 32 char acak) — container menolak start bila kosong/lemah.
+      # Generate: node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET belum diset di environment 1Panel}
+      JWT_EXPIRES_IN: 12h
+      # JWT_PREVIOUS_SECRETS: ${JWT_PREVIOUS_SECRETS:-}
       UPLOAD_DIR: /app/uploads
       MAX_FILE_SIZE: 10485760
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost}
+      # Prasasti Guard (anti-bot login)
+      GUARD_API_URL: ${GUARD_API_URL:-https://guard.prasastigroup.id}
+      GUARD_ENABLED: "true"
+      GUARD_MIN_SCORE_SENSITIVE: ${GUARD_MIN_SCORE_SENSITIVE:-0}
+      # Rate limit login
+      LOGIN_MAX_ATTEMPTS: 5
+      LOGIN_USER_LOCK_MS: 900000
+      LOGIN_MAX_ATTEMPTS_IP: 20
+      LOGIN_IP_LOCK_MS: 1800000
+      # Reset password via email (Resend)
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:-Finance Prasasti <finance@prasastigroup.id>}
+      APP_BASE_URL: ${APP_BASE_URL:-https://finance.prasastigroup.id}
+      PASSWORD_MIN_LENGTH: 8
     volumes:
       - uploads_data:/app/uploads
     ports:
@@ -56,7 +76,14 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        VITE_API_URL: ${VITE_API_URL:-http://localhost:3001/api}
+        # WAJIB agar login pakai sesi JWT terverifikasi server (No.3).
+        # Isi URL publik backend, mis. https://api.domain-anda.com
+        VITE_BACKEND_URL: ${VITE_BACKEND_URL:-}
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-https://db-finance.prasastigroup.id}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
+        VITE_PRASASTI_API_URL: ${VITE_PRASASTI_API_URL:-https://guard.prasastigroup.id}
+        VITE_R2_WORKER_URL: ${VITE_R2_WORKER_URL:-}
+        VITE_EMAIL_NOTIFICATION_URL: ${VITE_EMAIL_NOTIFICATION_URL:-}
     container_name: finance-frontend
     restart: unless-stopped
     ports:

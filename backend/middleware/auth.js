@@ -1,4 +1,4 @@
-const jwt = require('jsonwebtoken');
+const { verifyToken } = require('../lib/jwt');
 const db = require('../config/database');
 
 // Middleware to verify JWT token
@@ -11,19 +11,31 @@ const authenticateToken = async (req, res, next) => {
     }
 
     try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        // No.9: verifikasi mendukung rotasi secret (aktif + secret lama)
+        const decoded = verifyToken(token);
 
         // Fetch user from database to ensure they still exist and get latest role
-        const result = await db.query('SELECT id, username, name, role FROM users WHERE id = $1', [decoded.userId]);
+        const result = await db.query(
+            'SELECT id, username, name, role, email, status FROM users WHERE id = $1',
+            [decoded.userId]
+        );
 
         if (result.rows.length === 0) {
             return res.status(401).json({ error: 'User not found' });
         }
 
+        // No.3: sesi terbunuh server-side saat akun di-suspend
+        if ((result.rows[0].status || 'active') === 'suspended') {
+            return res.status(403).json({ error: 'Akun Anda sedang suspended. Hubungi administrator.' });
+        }
+
         req.user = result.rows[0];
         next();
     } catch (error) {
-        console.error('Auth middleware error:', error);
+        if (error && error.name === 'TokenExpiredError') {
+            return res.status(401).json({ error: 'Sesi kedaluwarsa. Silakan login kembali.' });
+        }
+        console.error('Auth middleware error:', error.message);
         return res.status(403).json({ error: 'Invalid or expired token' });
     }
 };

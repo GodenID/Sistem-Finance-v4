@@ -29,7 +29,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { getAllRecords, createRecord, updateRecord, deleteRecord } from '../lib/api';
-import { TIPE_OPTIONS, ID_PERUSAHAAN_OPTIONS } from '../constants/companyTypes';
+import { TIPE_OPTIONS, ID_PERUSAHAAN_OPTIONS, getTipeOptionsByRole, getIdPerusahaanOptionsByRole } from '../constants/companyTypes';
 import ConfirmModal from '../components/ConfirmModal';
 import PasteUpload from '../components/PasteUpload';
 import { uploadFileToR2 } from '../utils/r2Upload';
@@ -1284,7 +1284,7 @@ const RecurringTransactions = () => {
                     className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm"
                   >
                     <option value="">Pilih Tipe</option>
-                    {TIPE_OPTIONS.map(opt => (
+                    {getTipeOptionsByRole(userRole).map(opt => (
                       <option key={opt.value} value={opt.value}>{opt.label}</option>
                     ))}
                   </select>
@@ -1300,7 +1300,7 @@ const RecurringTransactions = () => {
                     className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm"
                   >
                     <option value="">Pilih ID Perusahaan</option>
-                    {ID_PERUSAHAAN_OPTIONS.map(opt => (
+                    {getIdPerusahaanOptionsByRole(userRole).map(opt => (
                       <option key={opt.value} value={opt.value}>{opt.label}</option>
                     ))}
                   </select>

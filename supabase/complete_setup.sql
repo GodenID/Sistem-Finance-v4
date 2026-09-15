@@ -28,7 +28,10 @@ CREATE TABLE users (
     username VARCHAR(50) UNIQUE NOT NULL,
     password VARCHAR(255) NOT NULL,
     name VARCHAR(100) NOT NULL,
-    role VARCHAR(50) NOT NULL CHECK (role IN ('administrator', 'team_finance', 'bod', 'staff', 'manager', 'guest')),
+    email VARCHAR(255),
+    email_notifications_enabled BOOLEAN DEFAULT true,
+    status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'suspended')),
+    role VARCHAR(50) NOT NULL CHECK (role IN ('administrator', 'team_finance', 'bod', 'hrd', 'staff', 'manager', 'guest')),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE
 );
@@ -146,12 +149,14 @@ CREATE TABLE penyelesaian (
     status_selisih VARCHAR(50),
     metode_pengembalian VARCHAR(50),
     lampiran TEXT,
+    bukti_kekurangan TEXT,
     keterangan TEXT,
     status_approval VARCHAR(20) DEFAULT 'Pending' CHECK (status_approval IN ('Pending', 'Approved', 'Rejected')),
     disetujui_oleh UUID REFERENCES users(id) ON DELETE SET NULL,
     nama_approver VARCHAR(255),
     status_penyelesaian VARCHAR(50) DEFAULT 'Belum Selesai',
     user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    is_confidential BOOLEAN DEFAULT false,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE
 );
@@ -248,6 +253,8 @@ CREATE INDEX idx_penyelesaian_created_at ON penyelesaian(created_at);
 CREATE INDEX idx_penyelesaian_nomor_referensi ON penyelesaian(nomor_referensi);
 
 CREATE INDEX idx_vendors_status ON vendors(status);
+CREATE INDEX idx_users_status ON users(status);
+CREATE INDEX idx_users_email_notifications_enabled ON users(email_notifications_enabled);
 
 CREATE INDEX idx_recurring_transactions_next_run ON recurring_transactions(next_run_date);
 CREATE INDEX idx_recurring_transactions_active ON recurring_transactions(is_active);

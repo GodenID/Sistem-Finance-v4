@@ -1,3 +1,6 @@
+// Keys untuk hrdOnly yang akan difilter role
+export const HRD_ONLY_TIPE = 'Confidential HRD';
+
 // Company Types with Colors
 export const COMPANY_TYPES_WITH_COLORS = {
   'Prasasti Selaras': {
@@ -56,6 +59,14 @@ export const COMPANY_TYPES_WITH_COLORS = {
     badgeBg: 'bg-orange-100',
     darkColor: 'bg-orange-600',
   },
+  [HRD_ONLY_TIPE]: {
+    color: 'pink',
+    bgColor: 'bg-pink-50',
+    textColor: 'text-pink-700',
+    borderColor: 'border-pink-200',
+    badgeBg: 'bg-pink-100',
+    darkColor: 'bg-pink-600',
+  },
 };
 
 // Company IDs with their details
@@ -100,6 +111,11 @@ export const COMPANY_IDS = [
     fullName: 'Kebutuhan Toko',
     tipe: 'Kebutuhan Toko',
   },
+  {
+    id: 'HRD',
+    fullName: 'Confidential HRD',
+    tipe: HRD_ONLY_TIPE,
+  },
 ];
 
 // Tipe Unit Bisnis options for dropdown
@@ -110,15 +126,29 @@ export const TIPE_OPTIONS = [
   { value: 'Mutiari Decoration', label: 'Mutiari Decoration' },
   { value: 'Kebutuhan Kantor', label: 'Kebutuhan Kantor' },
   { value: 'Kebutuhan Kebun', label: 'Kebutuhan Kebun' },
-  { value: 'Kebutuhan Toko', label: 'Kebutuhan Toko' }
+  { value: 'Kebutuhan Toko', label: 'Kebutuhan Toko' },
+  { value: HRD_ONLY_TIPE, label: HRD_ONLY_TIPE, hrdOnly: true }
 ];
 
-// ID Perusahaan options for dropdown (all options always visible)
+// ID Perusahaan options for dropdown
 export const ID_PERUSAHAAN_OPTIONS = COMPANY_IDS.map(company => ({
   value: company.id,
   label: `${company.id} - ${company.fullName}`,
-  tipe: company.tipe
+  tipe: company.tipe,
+  hrdOnly: company.tipe === HRD_ONLY_TIPE
 }));
+
+// Filter tipe options by role (HRD-only options hidden for non-HRD)
+export const getTipeOptionsByRole = (userRole) => {
+  if (userRole?.toLowerCase() === 'hrd') return TIPE_OPTIONS;
+  return TIPE_OPTIONS.filter(opt => !opt.hrdOnly);
+};
+
+// Filter id perusahaan options by role
+export const getIdPerusahaanOptionsByRole = (userRole) => {
+  if (userRole?.toLowerCase() === 'hrd') return ID_PERUSAHAAN_OPTIONS;
+  return ID_PERUSAHAAN_OPTIONS.filter(opt => !opt.hrdOnly);
+};
 
 // Helper to get colors by tipe
 export const getColorsByTipe = (tipe) => {

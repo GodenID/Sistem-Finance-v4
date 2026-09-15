@@ -9,6 +9,7 @@ import AdminRoute from './components/AdminRoute';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import PageLoading from './components/PageLoading';
+import SiteGate from './components/SiteGate';
 
 // Lazy load components
 const Dashboard = React.lazy(() => import('./components/Dashboard'));
@@ -31,7 +32,11 @@ const Profile = React.lazy(() => import('./pages/Profile'));
 const Users = React.lazy(() => import('./pages/Users'));
 const RecurringTransactions = React.lazy(() => import('./pages/RecurringTransactions'));
 const ImageToPdf = React.lazy(() => import('./pages/ImageToPdf'));
+const Maintenance = React.lazy(() => import('./pages/Maintenance'));
+const MaintenancePage = React.lazy(() => import('./pages/MaintenancePage'));
 const Login = React.lazy(() => import('./pages/Login'));
+const ForgotPassword = React.lazy(() => import('./pages/ForgotPassword'));
+const ResetPassword = React.lazy(() => import('./pages/ResetPassword'));
 const NotFound = React.lazy(() => import('./pages/NotFound'));
 
 function App() {
@@ -58,6 +63,7 @@ function App() {
 
   return (
     <Router>
+      <SiteGate>
       <ToastProvider>
         <AuthProvider>
           <NotificationProvider>
@@ -66,6 +72,9 @@ function App() {
                 <Routes>
                   {/* Public Route - Login */}
                   <Route path="/login" element={<Login />} />
+                  {/* No.8: lupa & reset password */}
+                  <Route path="/forgot-password" element={<ForgotPassword />} />
+                  <Route path="/reset-password" element={<ResetPassword />} />
 
                   {/* 404 Page - Full screen tanpa sidebar */}
                   <Route path="/404" element={<NotFound />} />
@@ -127,6 +136,14 @@ function App() {
                                   <Route path="/users" element={<Users />} />
                                   <Route path="/recurring" element={<RecurringTransactions />} />
                                   <Route path="/tools/image-to-pdf" element={<ImageToPdf />} />
+                                  <Route
+                                    path="/maintenance"
+                                    element={
+                                      <AdminRoute>
+                                        <Maintenance />
+                                      </AdminRoute>
+                                    }
+                                  />
                                   <Route path="*" element={<Navigate to="/404" replace />} />
                                 </Routes>
                               </Suspense>
@@ -142,6 +159,7 @@ function App() {
           </NotificationProvider>
         </AuthProvider>
       </ToastProvider>
+      </SiteGate>
     </Router>
   );
 }

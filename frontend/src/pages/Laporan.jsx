@@ -23,9 +23,9 @@ import {
   Receipt
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { getAllRecords } from '../lib/api';
-import { TIPE_OPTIONS, ID_PERUSAHAAN_OPTIONS } from '../constants/companyTypes';
-import * as XLSX from 'xlsx';
+import { getAllRecords, getLightweightRows } from '../lib/api';
+import { TIPE_OPTIONS, ID_PERUSAHAAN_OPTIONS, getTipeOptionsByRole, getIdPerusahaanOptionsByRole } from '../constants/companyTypes';
+// NOTE (FIX #5): xlsx dimuat dinamis di handleExportExcel agar tidak masuk bundle awal.
 import {
   BarChart,
   Bar,
@@ -55,6 +55,7 @@ const Laporan = () => {
     kasbon: [],
     klaim: [],
     penyelesaian: [],
+    vendors: [],
     recurringTemplates: [],
     recurringInstances: []
   });
@@ -69,21 +70,58 @@ const Laporan = () => {
   // Expanded rows state
   const [expandedRows, setExpandedRows] = useState({});
 
+  // FIX #4: data ringan (created_at saja, 6 bulan) khusus untuk grafik tren,
+  // agar grafik tidak bergantung pada tabel full yang kini dibatasi periode.
+  const [trendRows, setTrendRows] = useState({ paymentRequests: [], kasbon: [], klaim: [] });
+
   // Check role access
   const canAccessLaporan = ['administrator', 'team_finance', 'bod'].includes(userRole);
 
   // Fetch data dari Supabase
+  // FIX #4: filter tanggal dikirim ke SERVER (gte/lte created_at) sehingga yang
+  // didownload hanya data periode aktif, bukan seluruh histori. Refetch saat
+  // periode/ganti tanggal custom berubah.
   useEffect(() => {
     const fetchReportData = async () => {
       if (!canAccessLaporan) return;
 
       try {
         setIsLoading(true);
-        const [prData, kasbonData, klaimData, penyelesaianData] = await Promise.all([
-          getAllRecords('payment_requests'),
-          getAllRecords('kasbon'),
-          getAllRecords('klaim'),
-          getAllRecords('penyelesaian')
+
+        // Hitung batas tanggal dari periode terpilih (format utk getAllRecords)
+        const now = new Date();
+        const toISODate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        let dateFilter = {};
+        if (selectedPeriod === 'today') {
+          const s = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+          dateFilter = { start_date: s.toISOString(), end_date: toISODate(now) };
+        } else if (selectedPeriod === 'week') {
+          const s = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+          s.setDate(s.getDate() - 7);
+          dateFilter = { start_date: s.toISOString() };
+        } else if (selectedPeriod === 'month') {
+          const s = new Date(now.getFullYear(), now.getMonth(), 1);
+          dateFilter = { start_date: s.toISOString() };
+        } else if (selectedPeriod === 'quarter') {
+          const q = Math.floor(now.getMonth() / 3);
+          const s = new Date(now.getFullYear(), q * 3, 1);
+          dateFilter = { start_date: s.toISOString() };
+        } else if (selectedPeriod === 'year') {
+          const s = new Date(now.getFullYear(), 0, 1);
+          dateFilter = { start_date: s.toISOString() };
+        } else if (selectedPeriod === 'custom') {
+          dateFilter = {
+            ...(customDateFrom ? { start_date: customDateFrom } : {}),
+            ...(customDateTo ? { end_date: customDateTo } : {}),
+          };
+        }
+
+        const [prData, kasbonData, klaimData, penyelesaianData, vendorData] = await Promise.all([
+          getAllRecords('payment_requests', dateFilter),
+          getAllRecords('kasbon', dateFilter),
+          getAllRecords('klaim', dateFilter),
+          getAllRecords('penyelesaian', dateFilter),
+          getAllRecords('vendors')
         ]);
 
 
@@ -101,10 +139,12 @@ const Laporan = () => {
           // Fetch instances
           const instances = await getAllRecords('recurring_instances');
 
-          // Manual join: populate 'recurring' property for each instance
+          // FIX #4: join O(n+m) via Map — sebelumnya .find() di dalam .map()
+          // sehingga O(n*m) dan melambat seiring data bertambah.
+          const templateById = new Map((recurringTemplates || []).map((t) => [t.id, t]));
           recurringInstances = (instances || [])
             .map(instance => {
-              const template = recurringTemplates.find(t => t.id === instance.recurring_id);
+              const template = templateById.get(instance.recurring_id);
               // Construct the 'recurring' object structure expected by the UI
               return {
                 ...instance,
@@ -131,6 +171,7 @@ const Laporan = () => {
           kasbon: kasbonData || [],
           klaim: klaimData || [],
           penyelesaian: penyelesaianData || [],
+          vendors: vendorData || [],
           recurringTemplates,
           recurringInstances
         });
@@ -142,6 +183,28 @@ const Laporan = () => {
     };
 
     fetchReportData();
+  }, [canAccessLaporan, selectedPeriod, customDateFrom, customDateTo]);
+
+  // Tren 6 bulan diambil terpisah dengan kolom ringan (id + created_at) sekali
+  // saat halaman dibuka — tidak ikut refetch tiap ganti periode.
+  useEffect(() => {
+    if (!canAccessLaporan) return;
+    const fetchTrend = async () => {
+      try {
+        const sixMoAgo = new Date();
+        sixMoAgo.setMonth(sixMoAgo.getMonth() - 6);
+        const since = sixMoAgo.toISOString();
+        const [pr, kb, kl] = await Promise.all([
+          getLightweightRows('payment_requests', { columns: 'id,created_at', since, limit: 5000 }),
+          getLightweightRows('kasbon', { columns: 'id,created_at', since, limit: 5000 }),
+          getLightweightRows('klaim', { columns: 'id,created_at', since, limit: 5000 }),
+        ]);
+        setTrendRows({ paymentRequests: pr, kasbon: kb, klaim: kl });
+      } catch (e) {
+        console.log('Error fetching trend data:', e);
+      }
+    };
+    fetchTrend();
   }, [canAccessLaporan]);
 
   // Format Rupiah helper
@@ -383,13 +446,17 @@ const Laporan = () => {
   };
 
   // Apply filters to all data
-  const filteredData = {
+  // FIX: di-memo agar grouping/chart di bawah tidak dihitung ulang tiap render
+  // (mis. tiap huruf diketik di pencarian). eslint deps sengaja eksplisit:
+  // applyFilters/filterRecurringByPeriod closure dari state di bawah.
+  const filteredData = useMemo(() => ({
     paymentRequests: applyFilters(reportData.paymentRequests),
     kasbon: applyFilters(reportData.kasbon),
     klaim: applyFilters(reportData.klaim),
     penyelesaian: applyFilters(reportData.penyelesaian),
     recurringInstances: filterRecurringByPeriod(reportData.recurringInstances)
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [reportData, selectedPeriod, customDateFrom, customDateTo, searchQL, filterTipe, filterIdPerusahaan]);
 
   // Recalculate stats with filtered data
   const filteredReportStats = {
@@ -444,6 +511,8 @@ const Laporan = () => {
   const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EF4444', '#06B6D4', '#EC4899'];
 
   // Prepare chart data - Trend per bulan (last 6 months)
+  // FIX #4: dihitung dari trendRows (kolom ringan 6 bulan), bukan dari
+  // reportData yang kini dibatasi periode aktif.
   const trendChartData = useMemo(() => {
     const months = [];
     const now = new Date();
@@ -456,17 +525,17 @@ const Laporan = () => {
       const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59);
 
       // Count transactions per month for each module
-      const prCount = reportData.paymentRequests.filter(item => {
+      const prCount = trendRows.paymentRequests.filter(item => {
         const itemDate = new Date(item.created_at);
         return itemDate >= monthStart && itemDate <= monthEnd;
       }).length;
 
-      const kasbonCount = reportData.kasbon.filter(item => {
+      const kasbonCount = trendRows.kasbon.filter(item => {
         const itemDate = new Date(item.created_at);
         return itemDate >= monthStart && itemDate <= monthEnd;
       }).length;
 
-      const klaimCount = reportData.klaim.filter(item => {
+      const klaimCount = trendRows.klaim.filter(item => {
         const itemDate = new Date(item.created_at);
         return itemDate >= monthStart && itemDate <= monthEnd;
       }).length;
@@ -480,7 +549,7 @@ const Laporan = () => {
     }
 
     return months;
-  }, [reportData]);
+  }, [trendRows]);
 
   // Prepare pie chart data - Status distribution
   const statusChartData = useMemo(() => {
@@ -597,7 +666,9 @@ const Laporan = () => {
     }));
   };
 
-  const categoryData = getDataByCategory();
+  // FIX: di-memo — grouping O(n) tidak diulang tiap render.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const categoryData = useMemo(() => getDataByCategory(), [filteredData, selectedReport]);
 
   // Gabungkan data dari semua modul berdasarkan nomor QL dan tipe
   const getCombinedDataByQL = () => {
@@ -635,11 +706,16 @@ const Laporan = () => {
     });
   };
 
-  const combinedData = getCombinedDataByQL();
+  // FIX: di-memo — spread + group + sort seluruh data tidak diulang tiap render.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const combinedData = useMemo(() => getCombinedDataByQL(), [filteredData]);
 
   // Function to export Excel with multiple sheets
-  const handleExportExcel = () => {
+  // FIX #5: xlsx (~800KB) dimuat dinamis hanya saat tombol diklik,
+  // tidak membebani bundle awal halaman Laporan.
+  const handleExportExcel = async () => {
     try {
+      const XLSX = await import('xlsx');
       // Create a new workbook
       const wb = XLSX.utils.book_new();
 
@@ -683,24 +759,40 @@ const Laporan = () => {
       XLSX.utils.book_append_sheet(wb, ws_summary, 'Ringkasan');
 
       // Sheet 2: Payment Request Detail (using filtered data)
+      // Helper function to get vendor name
+      const getVendorName = (vendorId) => {
+        if (!vendorId) return '-';
+        const vendor = reportData.vendors.find(v => v.id === vendorId);
+        return vendor ? vendor.nama : '-';
+      };
+
+      // Helper untuk mendapatkan tujuan pembayaran (Vendor atau VA)
+      const getPaymentDestination = (pr) => {
+        if (pr.metode_pembayaran === 'Virtual Account') {
+          return `VA: ${pr.virtual_account_name || '-'} (${pr.virtual_account_number || '-'})`;
+        }
+        return getVendorName(pr.vendor_id);
+      };
+
       const prData = [
         ['DETAIL PAYMENT REQUEST'],
         [''],
-        ['No PR', 'No QL', 'Tanggal', 'Tipe', 'Karyawan', 'Vendor', 'Nominal', 'Status Approval', 'Disetujui Oleh', 'Status Transfer'],
+        ['No PR', 'No QL', 'Tanggal', 'Tipe', 'Karyawan', 'Metode', 'Tujuan Pembayaran', 'Nominal', 'Status Approval', 'Disetujui Oleh', 'Status Transfer'],
         ...filteredData.paymentRequests.map(pr => [
           pr.nomor_pr || '-',
           pr.nomor_ql || '-',
           pr.created_at ? new Date(pr.created_at).toLocaleDateString('id-ID') : '-',
           pr.tipe || '-',
           pr.nama_karyawan || '-',
-          pr.vendor_id || '-', // TODO: Get vendor name from vendor_id
+          pr.metode_pembayaran || 'Transfer Rekening',
+          getPaymentDestination(pr),
           formatRupiah(pr.nominal || 0),
           pr.status_approval || 'Pending',
           pr.disetujui_oleh || '-',
           pr.status_transfer || 'Belum Transfer'
         ]),
         [''],
-        ['TOTAL', '', '', '', '', '', formatRupiah(filteredData.paymentRequests.reduce((sum, pr) => sum + (parseFloat(pr.nominal) || 0), 0)), '', '', '']
+        ['TOTAL', '', '', '', '', '', '', formatRupiah(filteredData.paymentRequests.reduce((sum, pr) => sum + (parseFloat(pr.nominal) || 0), 0)), '', '', '']
       ];
 
       const ws_pr = XLSX.utils.aoa_to_sheet(prData);
@@ -710,7 +802,8 @@ const Laporan = () => {
         { wch: 12 },
         { wch: 18 },
         { wch: 18 },
-        { wch: 25 },
+        { wch: 18 },
+        { wch: 30 },
         { wch: 18 },
         { wch: 15 },
         { wch: 18 },
@@ -1020,7 +1113,7 @@ const Laporan = () => {
                   style={{ color: '#111827' }}
                 >
                   <option value="all" className="text-gray-900">Semua Tipe</option>
-                  {TIPE_OPTIONS.map(option => (
+                  {getTipeOptionsByRole(userRole).map(option => (
                     <option key={option.value} value={option.value} className="text-gray-900">{option.label}</option>
                   ))}
                 </select>
@@ -1038,7 +1131,7 @@ const Laporan = () => {
                   style={{ color: '#111827' }}
                 >
                   <option value="all" className="text-gray-900">-- Pilih ID Perusahaan (Opsional) --</option>
-                  {ID_PERUSAHAAN_OPTIONS.map(option => (
+                  {getIdPerusahaanOptionsByRole(userRole).map(option => (
                     <option key={option.value} value={option.value} className="text-gray-900">{option.label}</option>
                   ))}
                 </select>

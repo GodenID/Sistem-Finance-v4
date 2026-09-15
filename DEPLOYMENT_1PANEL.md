@@ -44,31 +44,47 @@ Sebelum menjalankan, Anda perlu menyesuaikan variable environment di `docker-com
 Namun, cara termudah di 1Panel adalah mengedit `docker-compose.yml` langsung di File Manager sebelum deploy, atau saat membuat Stack.
 
 Cek bagian `environment` di service `backend` dalam `docker-compose.yml`.
-Pastikan nilai-nilai ini benar:
+Variabel **wajib** diisi (di 1Panel: edit file compose / environment sebelum deploy):
 
 ```yaml
     environment:
-      # Database password (sesuaikan jika ingin mengubah)
-      POSTGRES_PASSWORD: your_secure_password
-      
-      # URL Database (internal docker network, biasanya tidak perlu ubah jika pakai postgres container yg sama)
-      DATABASE_URL: postgresql://postgres:your_secure_password@postgres:5432/finance_db
-      
-      # Rahasia JWT
-      JWT_SECRET: ganti-dengan-string-acak-yang-panjang
-      
-      # URL Frontend (untuk CORS)
-      FRONTEND_URL: http://IP-VPS-ANDA atau https://domain-anda.com
+      # PENTING: harus ke database yang SAMA dengan frontend
+      # (Postgres Supabase tempat tabel users berada).
+      # Contoh: postgresql://postgres:PASSWORD@db-finance.prasastigroup.id:5432/postgres
+      DATABASE_URL: postgresql://postgres:PASSWORD@HOST-SUPABASE-ANDA:5432/postgres
+
+      # WAJIB min. 32 char acak — container MENOLAK start bila kosong/lemah.
+      # Generate di laptop: node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+      JWT_SECRET: PASTE-SECRET-64-CHAR-DISINI
+
+      # URL Frontend (untuk CORS) — harus persis origin frontend
+      FRONTEND_URL: https://domain-anda.com
+
+      # Reset password via email (Resend) + link di email
+      RESEND_API_KEY: re_xxxxxxxxxxxx
+      RESEND_FROM_EMAIL: Finance Prasasti <finance@prasastigroup.id>
+      APP_BASE_URL: https://domain-anda.com
 ```
 
-Dan di service `frontend`:
+Variabel lain (Guard, rate-limit) sudah ada default aman di `docker-compose.yml`.
+
+Dan di service `frontend` (`args` = dibakar saat build, jadi ubah → **wajib rebuild**):
 ```yaml
       args:
-        # URL Backend untuk build frontend
-        VITE_API_URL: http://IP-VPS-ANDA:3001/api atau https://api.domain-anda.com
+        # WAJIB agar login pakai sesi JWT terverifikasi server (bukan flag localStorage)
+        VITE_BACKEND_URL: https://api.domain-anda.com
+        VITE_SUPABASE_URL: https://db-finance.prasastigroup.id
+        VITE_SUPABASE_ANON_KEY: eyJ0eXAiOi...
 ```
 
-> **Catatan:** Jika Anda mengubah `VITE_API_URL`, Anda **harus build ulang** image frontend (`docker-compose build frontend` atau Rebuild di 1Panel).
+> **Catatan:** Setiap mengubah `args` frontend, Anda **harus build ulang** image frontend (`docker-compose build frontend` atau Rebuild di 1Panel).
+
+## Langkah 3b: Migrasi Database (sekali saja)
+
+Jalankan di **Supabase SQL Editor** (database yang sama dengan `DATABASE_URL` di atas):
+
+1. File `supabase/migrations/add_password_resets.sql` (tabel token reset password).
+2. Pastikan tabel `activity_logs` ada (untuk audit login) — dari `supabase/schema.sql` bila instalasi lama belum punya.
 
 ## Langkah 4: Jalankan via 1Panel Container
 
@@ -87,6 +103,11 @@ Dan di service `frontend`:
 1.  Di daftar **Compose** / **Containers**, pastikan statusnya **Running** (hijau).
 2.  Jika ada masalah, klik ikon **Log** pada container `finance-backend` atau `finance-frontend`.
 3.  Akses aplikasi via browser: `http://IP-VPS-ANDA` (Default port 80).
+4.  Cek kesehatan backend langsung (ganti host backend Anda):
+    - `GET https://api.domain-anda.com/api/health` → `{ status: 'ok', ... }`
+    - `POST https://api.domain-anda.com/api/auth/login` tanpa body guard → `403 GUARD_REQUIRED` (proteksi aktif)
+5.  Login dari frontend → buka DevTools → Application → pastikan ada `authToken` (sesi JWT), bukan cuma flag `isAuthenticated`.
+6.  Cek audit: `SELECT action, record_number, new_value, changed_at FROM activity_logs WHERE table_name='auth' ORDER BY changed_at DESC LIMIT 10;`
 
 ## Troubleshooting
 

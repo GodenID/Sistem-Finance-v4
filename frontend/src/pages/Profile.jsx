@@ -14,11 +14,12 @@ import {
   CreditCard,
   CheckCircle,
   AlertCircle,
-  UserX
+  UserX,
+  Mail
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
-import { getRecordById, updateRecord, getAllRecords } from '../lib/api';
+import { getRecordById, updateRecord, getAllRecords, changePassword as apiChangePassword } from '../lib/api';
 
 const Profile = () => {
   const navigate = useNavigate();
@@ -39,7 +40,8 @@ const Profile = () => {
   // Form states
   const [formData, setFormData] = useState({
     name: '',
-    username: ''
+    username: '',
+    email: ''
   });
 
   // Password form
@@ -81,8 +83,8 @@ const Profile = () => {
           return;
         }
 
-        // Check if trying to view BOD profile (only BOD can view their own profile)
-        if (user.role === 'bod' && !isOwnProfile) {
+        // Check if trying to view BOD/HRD profile (only they can view their own)
+        if (['bod', 'hrd'].includes(user.role) && !isOwnProfile) {
           setAccessDenied(true);
           setIsLoading(false);
           return;
@@ -94,7 +96,8 @@ const Profile = () => {
         if (isOwnProfile) {
           setFormData({
             name: user.name || '',
-            username: user.username || ''
+            username: user.username || '',
+            email: user.email || ''
           });
         }
 
@@ -139,17 +142,26 @@ const Profile = () => {
       return;
     }
 
+    const email = formData.email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      showToast('Email tidak valid', 'error');
+      return;
+    }
+
     setIsSaving(true);
     try {
       await updateRecord('users', userId, {
-        name: formData.name.trim()
+        name: formData.name.trim(),
+        email
       });
+      setUserData(prev => prev ? { ...prev, name: formData.name.trim(), email } : prev);
 
       // Update auth context
       login({
         id: userId,
         name: formData.name.trim(),
-        role: userRole
+        role: userRole,
+        email
       });
 
       showToast('Profil berhasil diperbarui', 'success');
@@ -175,8 +187,8 @@ const Profile = () => {
       return;
     }
 
-    if (passwordForm.newPassword.length < 6) {
-      showToast('Password baru minimal 6 karakter', 'error');
+    if (passwordForm.newPassword.length < 8) {
+      showToast('Password baru minimal 8 karakter', 'error');
       return;
     }
 
@@ -185,21 +197,38 @@ const Profile = () => {
       return;
     }
 
+    // No.10: mode backend mewajibkan verifikasi manusia yang fresh
+    // (server menolak token bekas/skor rendah via requireFreshGuard)
+    const backendMode = isBackendAuthEnabled();
+    if (backendMode && (!pwdGuardToken || !isGuardTokenFresh(pwdGuardAt))) {
+      showToast('Selesaikan verifikasi keamanan terlebih dahulu', 'error');
+      return;
+    }
+
     setIsSaving(true);
     try {
-      // Verify current password via API
-      const user = await getRecordById('users', userId);
+      // Proteksi bot via SiteGate Turnstile — tanpa captcha per-form.
+      // changePassword otomatis memakai backend bila tersedia, fallback direct bila tidak.
+      try {
+        await apiChangePassword(passwordForm.currentPassword, passwordForm.newPassword);
+      } catch (backendErr) {
+        const msg = backendErr?.message || '';
+        // Fallback Supabase-direct bila backend tidak dikonfigurasi
+        if (!msg.includes('membutuhkan backend')) throw backendErr;
+        // Verify current password via API
+        const user = await getRecordById('users', userId);
 
-      if (user?.password !== passwordForm.currentPassword) {
-        showToast('Password lama tidak benar', 'error');
-        setIsSaving(false);
-        return;
+        if (user?.password !== passwordForm.currentPassword) {
+          showToast('Password lama tidak benar', 'error');
+          setIsSaving(false);
+          return;
+        }
+
+        // Update password
+        await updateRecord('users', userId, {
+          password: passwordForm.newPassword
+        });
       }
-
-      // Update password
-      await updateRecord('users', userId, {
-        password: passwordForm.newPassword
-      });
 
       // Reset form
       setPasswordForm({
@@ -211,7 +240,7 @@ const Profile = () => {
       showToast('Password berhasil diubah', 'success');
     } catch (error) {
       console.error('Error changing password:', error);
-      showToast('Gagal mengubah password', 'error');
+      showToast(error.response?.data?.error || error.message || 'Gagal mengubah password', 'error');
     } finally {
       setIsSaving(false);
     }
@@ -222,6 +251,7 @@ const Profile = () => {
       administrator: { bg: 'bg-red-100', text: 'text-red-700', label: 'Administrator' },
       team_finance: { bg: 'bg-blue-100', text: 'text-blue-700', label: 'Team Finance' },
       bod: { bg: 'bg-purple-100', text: 'text-purple-700', label: 'BOD' },
+      hrd: { bg: 'bg-pink-100', text: 'text-pink-700', label: 'HRD' },
       manager: { bg: 'bg-emerald-100', text: 'text-emerald-700', label: 'Manager' },
       staff: { bg: 'bg-gray-100', text: 'text-gray-700', label: 'Staff' },
       guest: { bg: 'bg-amber-100', text: 'text-amber-700', label: 'Guest' }
@@ -314,6 +344,12 @@ const Profile = () => {
               {isOwnProfile && <span className="text-xs text-primary-600 ml-1">(Anda)</span>}
             </h2>
             <p className="text-sm text-gray-500 mt-1">@{displayUsername || 'username'}</p>
+            {userData?.email && (
+              <p className="mt-1 flex items-center justify-center gap-1 text-sm text-gray-500">
+                <Mail className="h-4 w-4" />
+                {userData.email}
+              </p>
+            )}
 
             {/* Role Badge */}
             <div className="mt-3">
@@ -407,6 +443,22 @@ const Profile = () => {
 
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      Email Notifikasi
+                    </label>
+                    <input
+                      type="email"
+                      name="email"
+                      value={formData.email}
+                      onChange={handleInputChange}
+                      className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                      placeholder="nama@perusahaan.com"
+                      required
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Email ini dipakai untuk notifikasi transfer dari Finance</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
                       Role
                     </label>
                     <input
@@ -456,6 +508,13 @@ const Profile = () => {
 
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      Email
+                    </label>
+                    <p className="text-gray-800">{userData?.email || '-'}</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
                       Role
                     </label>
                     <span className={`inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-semibold ${roleBadge.bg} ${roleBadge.text}`}>
@@ -493,7 +552,7 @@ const Profile = () => {
                 <div>
                   <p className="text-sm text-amber-700 font-medium">Perhatian</p>
                   <p className="text-xs text-amber-600 mt-1">
-                    Pastikan password baru Anda mudah diingat namun sulit ditebak. Gunakan minimal 6 karakter.
+                    Pastikan password baru Anda mudah diingat namun sulit ditebak. Gunakan minimal 8 karakter.
                   </p>
                 </div>
               </div>
@@ -573,8 +632,7 @@ const Profile = () => {
                     type="submit"
                     disabled={isSaving}
                     className="w-full sm:w-auto px-6 py-2.5 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors font-medium flex items-center justify-center space-x-2 disabled:opacity-50"
-                  >
-                    {isSaving ? (
+                  >>                    {isSaving ? (
                       <>
                         <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                         <span>Menyimpan...</span>

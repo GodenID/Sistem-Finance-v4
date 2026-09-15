@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Users, UserPlus, Search, X, Eye, EyeOff, Edit2 } from 'lucide-react';
 import { getAllRecords, createRecord, updateRecord, deleteRecord } from '../lib/api';
+import { useAuth } from '../context/AuthContext';
 
 const Karyawan = () => {
+  const { userId: currentUserId, login, logout } = useAuth();
   const [karyawan, setKaryawan] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -13,13 +15,19 @@ const Karyawan = () => {
     name: '',
     username: '',
     password: '',
-    role: 'staff'
+    email: '',
+    role: 'staff',
+    email_notifications_enabled: true,
+    status: 'active'
   });
   const [editFormData, setEditFormData] = useState({
     name: '',
     username: '',
     password: '',
-    role: 'staff'
+    email: '',
+    role: 'staff',
+    email_notifications_enabled: true,
+    status: 'active'
   });
   const [showPassword, setShowPassword] = useState(false);
   const [showEditPassword, setShowEditPassword] = useState(false);
@@ -46,13 +54,48 @@ const Karyawan = () => {
 
   // Handle input change
   const handleInputChange = (e) => {
-    const { name, value } = e.target;
+    const { name, value, type, checked } = e.target;
     setFormData(prev => ({
       ...prev,
-      [name]: value
+      [name]: type === 'checkbox' ? checked : value
     }));
     setError('');
   };
+
+  const handleEditInputChange = (e) => {
+    const { name, value, type, checked } = e.target;
+    setEditFormData(prev => ({
+      ...prev,
+      [name]: type === 'checkbox' ? checked : value
+    }));
+    setError('');
+  };
+
+  const resetCreateForm = () => {
+    setFormData({
+      name: '',
+      username: '',
+      password: '',
+      email: '',
+      role: 'staff',
+      email_notifications_enabled: true,
+      status: 'active'
+    });
+  };
+
+  const resetEditForm = () => {
+    setEditFormData({
+      name: '',
+      username: '',
+      password: '',
+      email: '',
+      role: 'staff',
+      email_notifications_enabled: true,
+      status: 'active'
+    });
+  };
+
+  const isValidEmail = (value) => !value || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 
   // Handle edit karyawan
   const handleEdit = (karyawan) => {
@@ -61,7 +104,10 @@ const Karyawan = () => {
       name: karyawan.name,
       username: karyawan.username,
       password: '', // Kosongkan password, user bisa mengisi jika ingin mengubah
-      role: karyawan.role
+      email: karyawan.email || '',
+      role: karyawan.role,
+      email_notifications_enabled: karyawan.email_notifications_enabled !== false,
+      status: karyawan.status || 'active'
     });
     setShowEditModal(true);
     setError('');
@@ -95,11 +141,20 @@ const Karyawan = () => {
       return;
     }
 
+    const editEmail = editFormData.email.trim().toLowerCase();
+    if (!isValidEmail(editEmail)) {
+      setError('Format email tidak valid');
+      return;
+    }
+
     try {
       const updateData = {
         name: editFormData.name.trim(),
         username: editFormData.username.trim().toLowerCase(),
-        role: editFormData.role
+        email: editEmail || null,
+        role: editFormData.role,
+        email_notifications_enabled: editFormData.email_notifications_enabled,
+        status: editFormData.status
       };
 
       // Hanya update password jika diisi
@@ -109,15 +164,26 @@ const Karyawan = () => {
 
       await updateRecord('users', editingKaryawan.id, updateData);
 
+      if (editingKaryawan.id === currentUserId) {
+        if (updateData.status === 'suspended') {
+          await logout();
+          return;
+        }
+
+        login({
+          id: editingKaryawan.id,
+          name: updateData.name,
+          role: updateData.role,
+          email: updateData.email || '',
+          status: updateData.status,
+          email_notifications_enabled: updateData.email_notifications_enabled
+        });
+      }
+
       setSuccess('Karyawan berhasil diperbarui');
       setShowEditModal(false);
       setEditingKaryawan(null);
-      setEditFormData({
-        name: '',
-        username: '',
-        password: '',
-        role: 'staff'
-      });
+      resetEditForm();
       fetchKaryawan(); // Refresh list
 
       // Clear success message after 3 seconds
@@ -145,6 +211,12 @@ const Karyawan = () => {
       return;
     }
 
+    const email = formData.email.trim().toLowerCase();
+    if (!isValidEmail(email)) {
+      setError('Format email tidak valid');
+      return;
+    }
+
     // Check username sudah ada
     const existingUser = karyawan.find(k => k.username.toLowerCase() === formData.username.toLowerCase());
     if (existingUser) {
@@ -160,18 +232,16 @@ const Karyawan = () => {
         name: formData.name.trim(),
         username: formData.username.trim().toLowerCase(),
         password: formData.password,
-        role: formData.role
+        email: email || null,
+        role: formData.role,
+        email_notifications_enabled: formData.email_notifications_enabled,
+        status: formData.status
       };
 
       await createRecord('users', newUser);
 
       setSuccess('Karyawan berhasil ditambahkan');
-      setFormData({
-        name: '',
-        username: '',
-        password: '',
-        role: 'staff'
-      });
+      resetCreateForm();
       setShowModal(false);
       fetchKaryawan(); // Refresh list
 
@@ -208,7 +278,9 @@ const Karyawan = () => {
     return (
       k.name.toLowerCase().includes(search) ||
       k.username.toLowerCase().includes(search) ||
-      k.role.toLowerCase().includes(search)
+      k.email?.toLowerCase().includes(search) ||
+      k.role.toLowerCase().includes(search) ||
+      (k.status || 'active').toLowerCase().includes(search)
     );
   });
 
@@ -218,6 +290,7 @@ const Karyawan = () => {
       'administrator': 'bg-red-100 text-red-700',
       'team_finance': 'bg-blue-100 text-blue-700',
       'bod': 'bg-purple-100 text-purple-700',
+      'hrd': 'bg-pink-100 text-pink-700',
       'manager': 'bg-green-100 text-green-700',
       'staff': 'bg-gray-100 text-gray-700',
       'guest': 'bg-yellow-100 text-yellow-700'
@@ -226,7 +299,23 @@ const Karyawan = () => {
       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${badges[role] || badges.staff}`}>
         {role === 'team_finance' ? 'Team Finance' :
           role === 'bod' ? 'BOD' :
-            role.charAt(0).toUpperCase() + role.slice(1)}
+            role === 'hrd' ? 'HRD' :
+              role.charAt(0).toUpperCase() + role.slice(1)}
+      </span>
+    );
+  };
+
+  const getEmailBadge = (enabled) => (
+    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${enabled === false ? 'bg-gray-100 text-gray-600' : 'bg-emerald-100 text-emerald-700'}`}>
+      {enabled === false ? 'Nonaktif' : 'Aktif'}
+    </span>
+  );
+
+  const getStatusBadge = (status) => {
+    const isSuspended = status === 'suspended';
+    return (
+      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${isSuspended ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>
+        {isSuspended ? 'Suspended' : 'Active'}
       </span>
     );
   };
@@ -271,7 +360,7 @@ const Karyawan = () => {
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
           <input
             type="text"
-            placeholder="Cari karyawan berdasarkan nama, username, atau role..."
+            placeholder="Cari karyawan berdasarkan nama, username, email, role, atau status..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
@@ -297,7 +386,10 @@ const Karyawan = () => {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">No</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nama</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Username</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email Notif</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tanggal Dibuat</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Aksi</th>
                 </tr>
@@ -308,7 +400,10 @@ const Karyawan = () => {
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{index + 1}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{k.name}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{k.username}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{k.email || '-'}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">{getEmailBadge(k.email_notifications_enabled)}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">{getRoleBadge(k.role)}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">{getStatusBadge(k.status || 'active')}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
                       {new Date(k.created_at).toLocaleDateString('id-ID', {
                         year: 'numeric',
@@ -350,12 +445,7 @@ const Karyawan = () => {
               <button
                 onClick={() => {
                   setShowModal(false);
-                  setFormData({
-                    name: '',
-                    username: '',
-                    password: '',
-                    role: 'staff'
-                  });
+                  resetCreateForm();
                   setError('');
                 }}
                 className="text-gray-400 hover:text-gray-600"
@@ -428,6 +518,20 @@ const Karyawan = () => {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Email
+                </label>
+                <input
+                  type="email"
+                  name="email"
+                  value={formData.email}
+                  onChange={handleInputChange}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  placeholder="nama@perusahaan.com"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
                   Role <span className="text-red-500">*</span>
                 </label>
                 <select
@@ -439,6 +543,7 @@ const Karyawan = () => {
                 >
                   <option value="staff">Staff</option>
                   <option value="manager">Manager</option>
+                  <option value="hrd">HRD</option>
                   <option value="team_finance">Team Finance</option>
                   <option value="bod">BOD</option>
                   <option value="administrator">Administrator</option>
@@ -446,17 +551,43 @@ const Karyawan = () => {
                 </select>
               </div>
 
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Status User <span className="text-red-500">*</span>
+                </label>
+                <select
+                  name="status"
+                  value={formData.status}
+                  onChange={handleInputChange}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  required
+                >
+                  <option value="active">Active</option>
+                  <option value="suspended">Suspended</option>
+                </select>
+                <p className="text-xs text-gray-500 mt-1">Suspended hanya bisa melihat data dan tidak bisa menyimpan perubahan.</p>
+              </div>
+
+              <label className="flex items-start gap-3 rounded-lg border border-gray-200 p-3">
+                <input
+                  type="checkbox"
+                  name="email_notifications_enabled"
+                  checked={formData.email_notifications_enabled}
+                  onChange={handleInputChange}
+                  className="mt-1 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                />
+                <span>
+                  <span className="block text-sm font-medium text-gray-700">Terima email notifikasi</span>
+                  <span className="block text-xs text-gray-500">Matikan agar user tidak mendapatkan email dari sistem.</span>
+                </span>
+              </label>
+
               <div className="flex gap-3 pt-4">
                 <button
                   type="button"
                   onClick={() => {
                     setShowModal(false);
-                    setFormData({
-                      name: '',
-                      username: '',
-                      password: '',
-                      role: 'staff'
-                    });
+                    resetCreateForm();
                     setError('');
                   }}
                   className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
@@ -485,12 +616,7 @@ const Karyawan = () => {
                 onClick={() => {
                   setShowEditModal(false);
                   setEditingKaryawan(null);
-                  setEditFormData({
-                    name: '',
-                    username: '',
-                    password: '',
-                    role: 'staff'
-                  });
+                  resetEditForm();
                   setError('');
                 }}
                 className="text-gray-400 hover:text-gray-600"
@@ -514,14 +640,7 @@ const Karyawan = () => {
                   type="text"
                   name="name"
                   value={editFormData.name}
-                  onChange={(e) => {
-                    const { name, value } = e.target;
-                    setEditFormData(prev => ({
-                      ...prev,
-                      [name]: value
-                    }));
-                    setError('');
-                  }}
+                  onChange={handleEditInputChange}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                   placeholder="Masukkan nama lengkap"
                   required
@@ -536,14 +655,7 @@ const Karyawan = () => {
                   type="text"
                   name="username"
                   value={editFormData.username}
-                  onChange={(e) => {
-                    const { name, value } = e.target;
-                    setEditFormData(prev => ({
-                      ...prev,
-                      [name]: value
-                    }));
-                    setError('');
-                  }}
+                  onChange={handleEditInputChange}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                   placeholder="Masukkan username"
                   required
@@ -559,14 +671,7 @@ const Karyawan = () => {
                     type={showEditPassword ? "text" : "password"}
                     name="password"
                     value={editFormData.password}
-                    onChange={(e) => {
-                      const { name, value } = e.target;
-                      setEditFormData(prev => ({
-                        ...prev,
-                        [name]: value
-                      }));
-                      setError('');
-                    }}
+                    onChange={handleEditInputChange}
                     className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                     placeholder="Kosongkan jika tidak ingin mengubah"
                     minLength={6}
@@ -584,24 +689,32 @@ const Karyawan = () => {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Email
+                </label>
+                <input
+                  type="email"
+                  name="email"
+                  value={editFormData.email}
+                  onChange={handleEditInputChange}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  placeholder="nama@perusahaan.com"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
                   Role <span className="text-red-500">*</span>
                 </label>
                 <select
                   name="role"
                   value={editFormData.role}
-                  onChange={(e) => {
-                    const { name, value } = e.target;
-                    setEditFormData(prev => ({
-                      ...prev,
-                      [name]: value
-                    }));
-                    setError('');
-                  }}
+                  onChange={handleEditInputChange}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                   required
                 >
                   <option value="staff">Staff</option>
                   <option value="manager">Manager</option>
+                  <option value="hrd">HRD</option>
                   <option value="team_finance">Team Finance</option>
                   <option value="bod">BOD</option>
                   <option value="administrator">Administrator</option>
@@ -609,18 +722,44 @@ const Karyawan = () => {
                 </select>
               </div>
 
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Status User <span className="text-red-500">*</span>
+                </label>
+                <select
+                  name="status"
+                  value={editFormData.status}
+                  onChange={handleEditInputChange}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  required
+                >
+                  <option value="active">Active</option>
+                  <option value="suspended">Suspended</option>
+                </select>
+                <p className="text-xs text-gray-500 mt-1">Suspended hanya bisa melihat data dan tidak bisa menyimpan perubahan.</p>
+              </div>
+
+              <label className="flex items-start gap-3 rounded-lg border border-gray-200 p-3">
+                <input
+                  type="checkbox"
+                  name="email_notifications_enabled"
+                  checked={editFormData.email_notifications_enabled}
+                  onChange={handleEditInputChange}
+                  className="mt-1 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                />
+                <span>
+                  <span className="block text-sm font-medium text-gray-700">Terima email notifikasi</span>
+                  <span className="block text-xs text-gray-500">Matikan agar user tidak mendapatkan email dari sistem.</span>
+                </span>
+              </label>
+
               <div className="flex gap-3 pt-4">
                 <button
                   type="button"
                   onClick={() => {
                     setShowEditModal(false);
                     setEditingKaryawan(null);
-                    setEditFormData({
-                      name: '',
-                      username: '',
-                      password: '',
-                      role: 'staff'
-                    });
+                    resetEditForm();
                     setError('');
                   }}
                   className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
