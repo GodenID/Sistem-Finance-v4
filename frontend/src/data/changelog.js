@@ -3,9 +3,19 @@
 
 export const changelog = [
   {
+    version: '4.0',
+    date: '2026-09-07',
+    isNew: true,
+    changes: [
+      { type: 'improved', text: 'Tabel transaksi (Kasbon/Payment Request/Klaim/Penyelesaian) dibuka per halaman — tidak lagi loading lama' },
+      { type: 'improved', text: 'Cari & filter instan, Dashboard & Laporan terbuka lebih cepat' },
+      { type: 'improved', text: 'Export Excel diunduh hanya saat diklik, notifikasi tidak lagi bertubi-tubi' },
+    ]
+  },
+  {
     version: '1.7.0',
     date: '2024-12-09',
-    isNew: true,
+    isNew: false,
     changes: [
       { type: 'new', text: 'Dashboard Charts - Grafik trend transaksi 7 hari, pie chart status, bar chart perbandingan modul' },
       { type: 'new', text: 'Halaman Profil User - Edit nama, ubah password, statistik aktivitas' },
