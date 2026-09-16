@@ -64,6 +64,26 @@ export const logAuthAudit = async ({ userId = null, userName = '', action, detai
 
 export const isCurrentUserSuspended = () => localStorage.getItem('userStatus') === 'suspended';
 
+const persistLoginPermissions = (permissions) => {
+    try {
+        if (permissions && typeof permissions === 'object') {
+            localStorage.setItem('userPermissions', JSON.stringify(permissions));
+        } else if (typeof permissions === 'string' && permissions) {
+            localStorage.setItem('userPermissions', permissions);
+        } else {
+            localStorage.removeItem('userPermissions');
+        }
+    } catch {
+        /* abaikan */
+    }
+};
+
+/** Insert/update user dengan kolom permissions; fallback bila kolom belum dimigrasi. */
+const stripPermissionsOnMissingColumn = (error) => {
+    const msg = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase();
+    return msg.includes('permissions') && (msg.includes('column') || msg.includes('schema') || msg.includes('could not find'));
+};
+
 export const ensureCanMutate = () => {
     if (isCurrentUserSuspended()) {
         throw new Error(MUTATION_BLOCKED_MESSAGE);
@@ -630,6 +650,7 @@ export const login = async (username, password, guardToken = '') => {
         localStorage.setItem('userEmail', user.email || '');
         localStorage.setItem('userStatus', user.status || 'active');
         localStorage.setItem('emailNotificationsEnabled', user.email_notifications_enabled === false ? 'false' : 'true');
+        persistLoginPermissions(user.permissions);
         localStorage.setItem('isAuthenticated', 'true');
         // Sesi persistent — tidak ada sessionStartedAt / batas waktu.
         localStorage.removeItem('sessionStartedAt');
@@ -642,7 +663,8 @@ export const login = async (username, password, guardToken = '') => {
                 role: user.role,
                 email: user.email || '',
                 status: user.status || 'active',
-                email_notifications_enabled: user.email_notifications_enabled !== false
+                email_notifications_enabled: user.email_notifications_enabled !== false,
+                permissions: user.permissions || null
             }
         };
     }
@@ -686,6 +708,7 @@ export const login = async (username, password, guardToken = '') => {
     localStorage.setItem('userEmail', user.email || '');
     localStorage.setItem('userStatus', user.status || 'active');
     localStorage.setItem('emailNotificationsEnabled', user.email_notifications_enabled === false ? 'false' : 'true');
+    persistLoginPermissions(user.permissions);
     localStorage.setItem('isAuthenticated', 'true');
     // Sesi persistent — tidak ada sessionStartedAt / batas waktu.
     localStorage.removeItem('sessionStartedAt');
@@ -701,7 +724,8 @@ export const login = async (username, password, guardToken = '') => {
             role: user.role,
             email: user.email || '',
             status: user.status || 'active',
-            email_notifications_enabled: user.email_notifications_enabled !== false
+            email_notifications_enabled: user.email_notifications_enabled !== false,
+            permissions: user.permissions || null
         }
     };
 };
@@ -726,6 +750,7 @@ export const logout = async () => {
     localStorage.removeItem('userEmail');
     localStorage.removeItem('userStatus');
     localStorage.removeItem('emailNotificationsEnabled');
+    localStorage.removeItem('userPermissions');
     localStorage.removeItem('isAuthenticated');
     // Bersihkan sisa key sesi lama bila masih ada
     localStorage.removeItem('sessionStartedAt');
@@ -886,22 +911,39 @@ export const getAllUsers = async () => {
 export const createUser = async (userData) => {
     ensureCanMutate();
 
-    const { data, error } = await supabase
-        .from('users')
-        .insert({
-            username: userData.username,
-            password: userData.password,
-            name: userData.name,
-            role: userData.role,
-            email: userData.email || null,
-            email_notifications_enabled: userData.email_notifications_enabled !== false,
-            status: userData.status || 'active'
-        })
-        .select('*')
-        .single();
+    const payload = {
+        username: userData.username,
+        password: userData.password,
+        name: userData.name,
+        role: userData.role,
+        email: userData.email || null,
+        email_notifications_enabled: userData.email_notifications_enabled !== false,
+        status: userData.status || 'active'
+    };
+    if (userData.permissions !== undefined) payload.permissions = userData.permissions;
 
-    if (error) throw error;
-    return data;
+    try {
+        const { data, error } = await supabase
+            .from('users')
+            .insert(payload)
+            .select('*')
+            .single();
+
+        if (error) throw error;
+        return data;
+    } catch (error) {
+        if (payload.permissions !== undefined && stripPermissionsOnMissingColumn(error)) {
+            delete payload.permissions;
+            const { data, error: retryError } = await supabase
+                .from('users')
+                .insert(payload)
+                .select('*')
+                .single();
+            if (retryError) throw retryError;
+            return data;
+        }
+        throw error;
+    }
 };
 
 /**
@@ -917,21 +959,37 @@ export const updateUser = async (id, userData) => {
         email_notifications_enabled: userData.email_notifications_enabled !== false,
         status: userData.status || 'active'
     };
+    if (userData.permissions !== undefined) updates.permissions = userData.permissions;
 
     // Only update password if provided (plain text)
     if (userData.password) {
         updates.password = userData.password;
     }
 
-    const { data, error } = await supabase
-        .from('users')
-        .update(updates)
-        .eq('id', id)
-        .select('*')
-        .single();
+    try {
+        const { data, error } = await supabase
+            .from('users')
+            .update(updates)
+            .eq('id', id)
+            .select('*')
+            .single();
 
-    if (error) throw error;
-    return data;
+        if (error) throw error;
+        return data;
+    } catch (error) {
+        if (updates.permissions !== undefined && stripPermissionsOnMissingColumn(error)) {
+            delete updates.permissions;
+            const { data, error: retryError } = await supabase
+                .from('users')
+                .update(updates)
+                .eq('id', id)
+                .select('*')
+                .single();
+            if (retryError) throw retryError;
+            return data;
+        }
+        throw error;
+    }
 };
 
 /**

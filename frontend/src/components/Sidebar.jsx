@@ -27,7 +27,7 @@ import { useAppVersion } from '../lib/version';
 const Sidebar = ({ isOpen, setIsOpen }) => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { userRole } = useAuth();
+  const { userRole, hasPermission } = useAuth();
   const appVersion = useAppVersion();
   const [toolsOpen, setToolsOpen] = useState(false);
 
@@ -36,8 +36,12 @@ const Sidebar = ({ isOpen, setIsOpen }) => {
     { icon: ImageIcon, label: 'Image to PDF', path: '/tools/image-to-pdf' },
   ];
 
+  // Permission per-user (default mengikuti role, bisa dioverride Administrator)
+  const can = (key, fallbackRoles) =>
+    hasPermission ? hasPermission(key) : fallbackRoles.includes(userRole);
+
   // Roles yang bisa akses laporan: administrator, team_finance, bod
-  const canAccessLaporan = ['administrator', 'team_finance', 'bod'].includes(userRole);
+  const canAccessLaporan = can('view_laporan', ['administrator', 'team_finance', 'bod']);
 
   // Hanya administrator yang bisa akses halaman Karyawan
   const canAccessKaryawan = userRole === 'administrator';
@@ -84,8 +88,8 @@ const Sidebar = ({ isOpen, setIsOpen }) => {
     menuItems.push({ icon: Activity, label: 'Performance', path: '/performance' });
   }
 
-  // Tambahkan menu Transaksi Berulang untuk admin dan finance
-  if (['administrator', 'team_finance'].includes(userRole)) {
+  // Tambahkan menu Transaksi Berulang untuk admin dan finance (atau yg diberi permission)
+  if (can('manage_recurring', ['administrator', 'team_finance'])) {
     menuItems.push({ icon: Repeat, label: 'Transaksi Berulang', path: '/recurring' });
   }
 

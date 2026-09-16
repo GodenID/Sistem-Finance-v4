@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Users, UserPlus, Search, X, Eye, EyeOff, Edit2 } from 'lucide-react';
+import { Users, UserPlus, Search, X, Eye, EyeOff, Edit2, ShieldCheck, RotateCcw } from 'lucide-react';
 import { getAllRecords, createRecord, updateRecord, deleteRecord } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
+import { PERMISSION_GROUPS, getEffectivePermissions, hasCustomPermissions } from '../lib/permissions';
 
 const Karyawan = () => {
   const { userId: currentUserId, login, logout } = useAuth();
@@ -33,6 +34,12 @@ const Karyawan = () => {
   const [showEditPassword, setShowEditPassword] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+
+  // State kelola permission per-user (Administrator)
+  const [showPermModal, setShowPermModal] = useState(false);
+  const [permUser, setPermUser] = useState(null);
+  const [permForm, setPermForm] = useState({});
+  const [permSaving, setPermSaving] = useState(false);
 
   // Fetch karyawan dari Supabase
   const fetchKaryawan = async () => {
@@ -272,6 +279,67 @@ const Karyawan = () => {
     }
   };
 
+  // Buka modal kelola permission per-user
+  const handleOpenPermissions = (user) => {
+    setPermUser(user);
+    setPermForm({ ...getEffectivePermissions(user) });
+    setShowPermModal(true);
+    setError('');
+  };
+
+  const handleTogglePermission = (key) => {
+    setPermForm(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  // Simpan permission custom per-user (override dari default role)
+  const handleSavePermissions = async () => {
+    if (!permUser) return;
+    setPermSaving(true);
+    setError('');
+    setSuccess('');
+    try {
+      await updateRecord('users', permUser.id, { permissions: permForm });
+      setSuccess(`Permission "${permUser.name}" berhasil diperbarui`);
+      setShowPermModal(false);
+      setPermUser(null);
+      fetchKaryawan();
+      setTimeout(() => setSuccess(''), 3000);
+    } catch (err) {
+      console.error('Error updating permissions:', err);
+      const msg = err.message || 'Gagal memperbarui permission';
+      setError(
+        /permissions/i.test(msg)
+          ? `${msg}. Jika kolom belum ada, jalankan migrasi: supabase/migrations/add_user_permissions.sql`
+          : msg
+      );
+    } finally {
+      setPermSaving(false);
+    }
+  };
+
+  // Kembalikan ke default role (hapus override per-user)
+  const handleResetPermissions = async () => {
+    if (!permUser) return;
+    if (!window.confirm(`Kembalikan permission "${permUser.name}" ke default role "${permUser.role}"?`)) {
+      return;
+    }
+    setPermSaving(true);
+    setError('');
+    try {
+      await updateRecord('users', permUser.id, { permissions: null });
+      setSuccess(`Permission "${permUser.name}" dikembalikan ke default role`);
+      setShowPermModal(false);
+      setPermUser(null);
+      fetchKaryawan();
+      setTimeout(() => setSuccess(''), 3000);
+    } catch (err) {
+      console.error('Error resetting permissions:', err);
+      setError(err.message || 'Gagal mereset permission');
+    } finally {
+      setPermSaving(false);
+    }
+  };
+
   // Filter karyawan berdasarkan search term
   const filteredKaryawan = karyawan.filter(k => {
     const search = searchTerm.toLowerCase();
@@ -389,6 +457,7 @@ const Karyawan = () => {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email Notif</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Permission</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tanggal Dibuat</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Aksi</th>
@@ -403,6 +472,17 @@ const Karyawan = () => {
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{k.email || '-'}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">{getEmailBadge(k.email_notifications_enabled)}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">{getRoleBadge(k.role)}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      {hasCustomPermissions(k) ? (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-violet-100 text-violet-700">
+                          Custom User
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
+                          Default Role
+                        </span>
+                      )}
+                    </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">{getStatusBadge(k.status || 'active')}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
                       {new Date(k.created_at).toLocaleDateString('id-ID', {
@@ -419,6 +499,14 @@ const Karyawan = () => {
                         >
                           <Edit2 className="w-4 h-4" />
                           Edit
+                        </button>
+                        <button
+                          onClick={() => handleOpenPermissions(k)}
+                          className="text-violet-600 hover:text-violet-800 font-medium flex items-center gap-1"
+                          title="Atur permission edit/hapus/akses khusus untuk user ini"
+                        >
+                          <ShieldCheck className="w-4 h-4" />
+                          Permission
                         </button>
                         <button
                           onClick={() => handleDelete(k.id, k.name)}
@@ -774,6 +862,116 @@ const Karyawan = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Kelola Permission per-User */}
+      {showPermModal && permUser && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-6 border-b border-gray-200">
+              <div>
+                <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+                  <ShieldCheck className="w-5 h-5 text-violet-600" />
+                  Permission: {permUser.name}
+                </h2>
+                <p className="text-sm text-gray-500 mt-1">
+                  @{permUser.username} • Role: {permUser.role} •{' '}
+                  {hasCustomPermissions(permUser) ? 'Custom per-user' : 'Mengikuti default role'}
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowPermModal(false);
+                  setPermUser(null);
+                  setError('');
+                }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-5">
+              {error && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                  {error}
+                </div>
+              )}
+              <p className="text-sm text-gray-600">
+                Centang untuk memberi akses, hapus centang untuk mencabut — di luar default role user ini.
+                Perubahan langsung berlaku saat user tersebut login ulang / refresh sesi.
+              </p>
+
+              {PERMISSION_GROUPS.map((group) => (
+                <div key={group.key} className="border border-gray-200 rounded-lg overflow-hidden">
+                  <div className="bg-gray-50 px-4 py-2 text-sm font-semibold text-gray-700">
+                    {group.label}
+                  </div>
+                  <div className="divide-y divide-gray-100">
+                    {group.permissions.map((perm) => {
+                      const roleDefault = !!getEffectivePermissions({ role: permUser.role, permissions: null })[perm.key];
+                      const checked = !!permForm[perm.key];
+                      return (
+                        <label key={perm.key} className="flex items-start gap-3 px-4 py-3 hover:bg-gray-50 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => handleTogglePermission(perm.key)}
+                            className="mt-1 h-4 w-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500"
+                          />
+                          <span className="flex-1">
+                            <span className="block text-sm font-medium text-gray-800">
+                              {perm.label}
+                              {checked !== roleDefault && (
+                                <span className="ml-2 text-xs font-semibold text-violet-600">
+                                  (diubah dari default role)
+                                </span>
+                              )}
+                            </span>
+                            <span className="block text-xs text-gray-500">{perm.desc}</span>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={handleResetPermissions}
+                  disabled={permSaving}
+                  className="flex items-center justify-center gap-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+                  title="Hapus override dan kembalikan ke default role"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                  Reset
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowPermModal(false);
+                    setPermUser(null);
+                    setError('');
+                  }}
+                  disabled={permSaving}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSavePermissions}
+                  disabled={permSaving}
+                  className="flex-1 px-4 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-colors disabled:opacity-50"
+                >
+                  {permSaving ? 'Menyimpan...' : 'Simpan Permission'}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

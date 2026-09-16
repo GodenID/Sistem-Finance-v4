@@ -46,7 +46,7 @@ import {
 
 const Laporan = () => {
   const navigate = useNavigate();
-  const { userRole } = useAuth();
+  const { userRole, hasPermission } = useAuth();
   const [selectedPeriod, setSelectedPeriod] = useState('month');
   const [selectedReport, setSelectedReport] = useState('payment-request');
   const [isLoading, setIsLoading] = useState(true);
@@ -74,8 +74,8 @@ const Laporan = () => {
   // agar grafik tidak bergantung pada tabel full yang kini dibatasi periode.
   const [trendRows, setTrendRows] = useState({ paymentRequests: [], kasbon: [], klaim: [] });
 
-  // Check role access
-  const canAccessLaporan = ['administrator', 'team_finance', 'bod'].includes(userRole);
+  // Check role access — permission per-user (default mengikuti role)
+  const canAccessLaporan = hasPermission ? hasPermission('view_laporan') : ['administrator', 'team_finance', 'bod'].includes(userRole);
 
   // Fetch data dari Supabase
   // FIX #4: filter tanggal dikirim ke SERVER (gte/lte created_at) sehingga yang

@@ -7,7 +7,7 @@ const getAll = async (req, res) => {
     try {
         const { role } = req.query;
 
-        let query = 'SELECT id, username, name, role, created_at, updated_at FROM users WHERE 1=1';
+        let query = 'SELECT id, username, name, role, email, email_notifications_enabled, status, permissions, created_at, updated_at FROM users WHERE 1=1';
         const params = [];
         let paramIndex = 1;
 
@@ -31,7 +31,7 @@ const getById = async (req, res) => {
     try {
         const { id } = req.params;
         const result = await db.query(
-            'SELECT id, username, name, role, created_at, updated_at FROM users WHERE id = $1',
+            'SELECT id, username, name, role, email, email_notifications_enabled, status, permissions, created_at, updated_at FROM users WHERE id = $1',
             [id]
         );
 
@@ -49,7 +49,7 @@ const getById = async (req, res) => {
 // Create user
 const create = async (req, res) => {
     try {
-        const { username, password, name, role } = req.body;
+        const { username, password, name, role, email, email_notifications_enabled, status, permissions } = req.body;
 
         if (!username || !password || !name || !role) {
             return res.status(400).json({ error: 'Semua field harus diisi' });
@@ -65,10 +65,14 @@ const create = async (req, res) => {
         const hashedPassword = await bcrypt.hash(password, 10);
 
         const result = await db.query(
-            `INSERT INTO users (id, username, password, name, role, created_at)
-       VALUES ($1, $2, $3, $4, $5, NOW())
-       RETURNING id, username, name, role, created_at`,
-            [uuidv4(), username, hashedPassword, name, role]
+            `INSERT INTO users (id, username, password, name, role, email, email_notifications_enabled, status, permissions, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+       RETURNING id, username, name, role, email, email_notifications_enabled, status, permissions, created_at`,
+            [uuidv4(), username, hashedPassword, name, role,
+                email || null,
+                email_notifications_enabled !== false,
+                status || 'active',
+                permissions ? JSON.stringify(permissions) : null]
         );
 
         res.status(201).json(result.rows[0]);
@@ -82,6 +86,7 @@ const create = async (req, res) => {
 const update = async (req, res) => {
     try {
         const { id } = req.params;
+        const { username, name, role, password, email, email_notifications_enabled, status, permissions } = req.body;
         // Check permission: Admin or Own Profile
         if (req.user.role !== 'administrator' && req.user.id !== id) {
             return res.status(403).json({ error: 'Tidak memiliki izin untuk mengupdate user ini' });
@@ -92,10 +97,14 @@ const update = async (req, res) => {
             return res.status(403).json({ error: 'Hanya administrator yang dapat mengubah role' });
         }
 
+        // Prevent non-admin from changing permissions (hanya administrator yang
+        // boleh mengatur permission per-user)
+        if (req.user.role !== 'administrator' && permissions !== undefined) {
+            return res.status(403).json({ error: 'Hanya administrator yang dapat mengubah permission' });
+        }
+
         // Prevent non-admin from changing username (optional, if you want to restrict)
         // if (req.user.role !== 'administrator' && username && username !== req.user.username) { ... }
-
-        const { username, name, role, password } = req.body;
 
         // Check if username already exists (for different user)
         if (username) {
@@ -108,23 +117,49 @@ const update = async (req, res) => {
             }
         }
 
+        // Ambil data saat ini agar field yang tidak dikirim tidak ikut terhapus
+        const current = await db.query(
+            'SELECT username, name, role, email, email_notifications_enabled, status, permissions FROM users WHERE id = $1',
+            [id]
+        );
+        if (current.rows.length === 0) {
+            return res.status(404).json({ error: 'User tidak ditemukan' });
+        }
+        const cur = current.rows[0];
+
+        const nextUsername = username !== undefined ? username : cur.username;
+        const nextName = name !== undefined ? name : cur.name;
+        const nextRole = role !== undefined ? role : cur.role;
+        const nextEmail = email !== undefined ? email : cur.email;
+        const nextEmailNotif = email_notifications_enabled !== undefined
+            ? email_notifications_enabled
+            : cur.email_notifications_enabled;
+        const nextStatus = status !== undefined ? status : cur.status;
+        const nextPermissions = permissions !== undefined
+            ? (permissions === null ? null : JSON.stringify(permissions))
+            : cur.permissions;
+
         let query, params;
 
         if (password) {
             // Update with new password
             const hashedPassword = await bcrypt.hash(password, 10);
-            query = `UPDATE users 
-               SET username = $1, name = $2, role = $3, password = $4, updated_at = NOW()
-               WHERE id = $5
-               RETURNING id, username, name, role, created_at, updated_at`;
-            params = [username, name, role, hashedPassword, id];
+            query = `UPDATE users
+               SET username = $1, name = $2, role = $3, password = $4, email = $5,
+                   email_notifications_enabled = $6, status = $7, permissions = $8, updated_at = NOW()
+               WHERE id = $9
+               RETURNING id, username, name, role, email, email_notifications_enabled, status, permissions, created_at, updated_at`;
+            params = [nextUsername, nextName, nextRole, hashedPassword,
+                nextEmail, nextEmailNotif, nextStatus, nextPermissions, id];
         } else {
             // Update without password
-            query = `UPDATE users 
-               SET username = $1, name = $2, role = $3, updated_at = NOW()
-               WHERE id = $4
-               RETURNING id, username, name, role, created_at, updated_at`;
-            params = [username, name, role, id];
+            query = `UPDATE users
+               SET username = $1, name = $2, role = $3, email = $4,
+                   email_notifications_enabled = $5, status = $6, permissions = $7, updated_at = NOW()
+               WHERE id = $8
+               RETURNING id, username, name, role, email, email_notifications_enabled, status, permissions, created_at, updated_at`;
+            params = [nextUsername, nextName, nextRole,
+                nextEmail, nextEmailNotif, nextStatus, nextPermissions, id];
         }
 
         const result = await db.query(query, params);

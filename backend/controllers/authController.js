@@ -36,7 +36,7 @@ const login = async (req, res) => {
 
         // Find user by username
         const result = await db.query(
-            'SELECT id, username, password, name, role, email, status FROM users WHERE username = $1',
+            'SELECT id, username, password, name, role, email, status, permissions FROM users WHERE username = $1',
             [username]
         );
 

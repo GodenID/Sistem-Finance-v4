@@ -2,10 +2,14 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Plus, Search, Filter, Download, Eye, Edit, Trash2, Building2, X } from 'lucide-react';
 import { useVendor } from '../context/VendorContext';
+import { useAuth } from '../context/AuthContext';
 
 const Vendor = () => {
   const navigate = useNavigate();
   const { vendors, addVendor, updateVendor, deleteVendor } = useVendor();
+  const { hasPermission } = useAuth();
+  // Permission per-user (default semua role bisa kelola vendor, bisa dicabut Administrator)
+  const canEditVendor = hasPermission ? hasPermission('edit_vendor') : true;
   const [searchTerm, setSearchTerm] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editingVendor, setEditingVendor] = useState(null);
@@ -142,7 +146,9 @@ const Vendor = () => {
         </div>
         <button
           onClick={openAddModal}
-          className="flex items-center space-x-2 bg-primary-600 text-white px-4 py-2.5 rounded-lg font-medium hover:bg-primary-700 transition-colors shadow-sm"
+          disabled={!canEditVendor}
+          title={canEditVendor ? 'Tambah vendor baru' : 'Anda tidak memiliki permission kelola vendor'}
+          className="flex items-center space-x-2 bg-primary-600 text-white px-4 py-2.5 rounded-lg font-medium hover:bg-primary-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <Plus className="w-5 h-5" />
           <span>Tambah Vendor</span>
@@ -232,19 +238,23 @@ const Vendor = () => {
                       <button className="p-2 hover:bg-blue-50 text-blue-600 rounded-lg transition-colors">
                         <Eye className="w-4 h-4" />
                       </button>
-                      <button
-                        onClick={() => handleEdit(vendor)}
-                        title="Edit vendor"
-                        className="p-2 hover:bg-emerald-50 text-emerald-600 rounded-lg transition-colors"
-                      >
-                        <Edit className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => handleDelete(vendor.id)}
-                        className="p-2 hover:bg-rose-50 text-rose-600 rounded-lg transition-colors"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      {canEditVendor && (
+                        <>
+                          <button
+                            onClick={() => handleEdit(vendor)}
+                            title="Edit vendor"
+                            className="p-2 hover:bg-emerald-50 text-emerald-600 rounded-lg transition-colors"
+                          >
+                            <Edit className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDelete(vendor.id)}
+                            className="p-2 hover:bg-rose-50 text-rose-600 rounded-lg transition-colors"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </>
+                      )}
                     </div>
                   </td>
                 </tr>

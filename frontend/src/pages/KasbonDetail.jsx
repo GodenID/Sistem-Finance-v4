@@ -20,7 +20,7 @@ const KasbonDetail = () => {
     const { id } = useParams();
     const navigate = useNavigate();
     const { showToast } = useToast();
-    const { userName, userRole, userId } = useAuth();
+    const { userName, userRole, userId, hasPermission } = useAuth();
     const { refreshNotifications } = useNotification();
     const [kasbon, setKasbon] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
@@ -33,9 +33,10 @@ const KasbonDetail = () => {
     const [buktiTransferFile, setBuktiTransferFile] = useState(null);
     const [isUploading, setIsUploading] = useState(false);
 
-    const canApprove = ['administrator', 'bod', 'manager'].includes(userRole);
-    const canTransfer = userRole === 'team_finance';
-    const canViewConfidential = ['administrator', 'bod', 'team_finance', 'hrd'].includes(userRole?.toLowerCase());
+    // Permission per-user (default mengikuti role, bisa dioverride Administrator)
+    const canApprove = hasPermission ? hasPermission('approve') : ['administrator', 'bod', 'manager'].includes(userRole);
+    const canTransfer = hasPermission ? hasPermission('transfer') : userRole === 'team_finance';
+    const canViewConfidential = hasPermission ? hasPermission('view_confidential') : ['administrator', 'bod', 'team_finance', 'hrd'].includes(userRole?.toLowerCase());
 
     useEffect(() => {
         const fetchKasbonDetail = async () => {

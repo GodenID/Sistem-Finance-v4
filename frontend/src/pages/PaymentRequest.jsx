@@ -24,20 +24,21 @@ import { sendTransferNotification } from '../lib/emailNotifications';
 const PaymentRequest = () => {
   const navigate = useNavigate();
   const { vendors, addVendor, getVendorById, searchVendors, getActiveVendors } = useVendor();
-  const { userName, userRole, userId } = useAuth();
+  const { userName, userRole, userId, hasPermission } = useAuth();
   const { showToast } = useToast();
   const { refreshNotifications } = useNotification();
 
   // Check if user is manager (can edit/delete/approve)
-  const canManage = ['administrator', 'manager', 'bod'].includes(userRole);
-  const isAuthorizedApprover = ['administrator', 'manager', 'bod'].includes(userRole?.toLowerCase());
+  // Permission per-user (default mengikuti role, bisa dioverride Administrator dari halaman Karyawan)
+  const canManage = hasPermission ? hasPermission('approve') : ['administrator', 'manager', 'bod'].includes(userRole);
+  const isAuthorizedApprover = hasPermission ? hasPermission('approve') : ['administrator', 'manager', 'bod'].includes(userRole?.toLowerCase());
   const isGuest = userRole === 'guest';
-  const isFinance = userRole === 'team_finance';
+  const isFinance = hasPermission ? hasPermission('transfer') : userRole === 'team_finance';
   const isAdmin = userRole?.toLowerCase() === 'administrator';
   // BOD, Team Finance & Admin can edit
-  const canEditDelete = ['administrator', 'bod', 'team_finance'].includes(userRole?.toLowerCase());
+  const canEditDelete = hasPermission ? hasPermission('edit_payment_request') : ['administrator', 'bod', 'team_finance'].includes(userRole?.toLowerCase());
   // Only Admin & BOD can delete
-  const canDelete = ['administrator', 'bod'].includes(userRole?.toLowerCase());
+  const canDelete = hasPermission ? hasPermission('delete_payment_request') : ['administrator', 'bod'].includes(userRole?.toLowerCase());
 
   // Helper to check if record is locked
   const isLocked = (record) => {
@@ -46,7 +47,7 @@ const PaymentRequest = () => {
   };
 
   // Check if user can view confidential data (BOD, Admin, Team Finance, HRD)
-  const canViewConfidential = ['administrator', 'bod', 'team_finance', 'hrd'].includes(userRole?.toLowerCase());
+  const canViewConfidential = hasPermission ? hasPermission('view_confidential') : ['administrator', 'bod', 'team_finance', 'hrd'].includes(userRole?.toLowerCase());
 
   const [filterStatus, setFilterStatus] = useState('all'); // all, belum-transfer, sudah-transfer
   const ITEMS_PER_PAGE = 10;

@@ -23,24 +23,24 @@ import { sendTransferNotification } from '../lib/emailNotifications';
 
 const Klaim = () => {
   const navigate = useNavigate();
-  const { userName, userRole, userId } = useAuth();
+  const { userName, userRole, userId, hasPermission } = useAuth();
   const { showToast } = useToast();
   const { refreshNotifications } = useNotification();
   const isGuest = userRole === 'guest';
-  const isFinance = userRole === 'team_finance';
-  const canManage = ['administrator', 'manager', 'bod'].includes(userRole);
+  // Permission per-user (default mengikuti role, bisa dioverride Administrator dari halaman Karyawan)
+  const isFinance = hasPermission ? hasPermission('transfer') : userRole === 'team_finance';
+  const canManage = hasPermission ? hasPermission('approve') : ['administrator', 'manager', 'bod'].includes(userRole);
   const isAdmin = userRole?.toLowerCase() === 'administrator';
-  // BOD, Team Finance & Admin can edit and delete
-  const canEditDelete = ['administrator', 'bod', 'team_finance'].includes(userRole?.toLowerCase());
+  const canEditDelete = hasPermission ? hasPermission('edit_klaim') : ['administrator', 'bod', 'team_finance'].includes(userRole?.toLowerCase());
   // Only Admin & BOD can delete
-  const canDelete = ['administrator', 'bod'].includes(userRole?.toLowerCase());
+  const canDelete = hasPermission ? hasPermission('delete_klaim') : ['administrator', 'bod'].includes(userRole?.toLowerCase());
 
   // Helper to check if record is locked
   const isLocked = (record) => {
     if (isAdmin) return false;
     return record.statusTransfer === 'Sudah Transfer';
   };
-  const canViewConfidential = ['administrator', 'bod', 'team_finance', 'hrd'].includes(userRole?.toLowerCase());
+  const canViewConfidential = hasPermission ? hasPermission('view_confidential') : ['administrator', 'bod', 'team_finance', 'hrd'].includes(userRole?.toLowerCase());
   const [filterStatus, setFilterStatus] = useState('all');
   const ITEMS_PER_PAGE = 10;
   const [showModal, setShowModal] = useState(false);

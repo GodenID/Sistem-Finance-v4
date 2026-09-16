@@ -17,11 +17,12 @@ const PenyelesaianDetail = () => {
     const { id } = useParams();
     const navigate = useNavigate();
     const { showToast } = useToast();
-    const { userRole, userId, userName } = useAuth();
+    const { userRole, userId, userName, hasPermission } = useAuth();
     const { refreshNotifications } = useNotification();
-    const isFinance = userRole === 'team_finance';
-    const canManage = ['administrator', 'manager', 'bod'].includes(userRole);
-    const canViewConfidential = ['administrator', 'bod', 'team_finance', 'hrd'].includes(userRole?.toLowerCase());
+    // Permission per-user (default mengikuti role, bisa dioverride Administrator)
+    const isFinance = hasPermission ? hasPermission('transfer') : userRole === 'team_finance';
+    const canManage = hasPermission ? hasPermission('approve') : ['administrator', 'manager', 'bod'].includes(userRole);
+    const canViewConfidential = hasPermission ? hasPermission('view_confidential') : ['administrator', 'bod', 'team_finance', 'hrd'].includes(userRole?.toLowerCase());
     const [penyelesaian, setPenyelesaian] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isExportingPdf, setIsExportingPdf] = useState(false);

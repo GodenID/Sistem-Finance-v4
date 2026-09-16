@@ -36,7 +36,7 @@ import { uploadFileToR2 } from '../utils/r2Upload';
 
 const RecurringTransactions = () => {
   const navigate = useNavigate();
-  const { userName, userRole, userId } = useAuth();
+  const { userName, userRole, userId, hasPermission } = useAuth();
   const { showToast } = useToast();
 
   const [isLoading, setIsLoading] = useState(true);
@@ -84,7 +84,8 @@ const RecurringTransactions = () => {
     }
   });
 
-  const canManage = ['administrator', 'team_finance'].includes(userRole);
+  // Permission per-user (default mengikuti role, bisa dioverride Administrator)
+  const canManage = hasPermission ? hasPermission('manage_recurring') : ['administrator', 'team_finance'].includes(userRole);
   const isAdmin = userRole === 'administrator';
 
   useEffect(() => {

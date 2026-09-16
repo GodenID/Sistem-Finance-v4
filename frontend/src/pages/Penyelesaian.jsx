@@ -16,15 +16,17 @@ import { generatePenyelesaianNumber } from '../utils/generateUniqueNumber';
 
 const Penyelesaian = () => {
   const navigate = useNavigate();
-  const { userName, userRole, userId } = useAuth();
+  const { userName, userRole, userId, hasPermission } = useAuth();
   const { showToast } = useToast();
   const { refreshNotifications } = useNotification();
   const isGuest = userRole === 'guest';
-  const isFinance = userRole === 'team_finance';
-  const canManage = ['administrator', 'manager', 'bod'].includes(userRole);
-  const canDelete = ['administrator', 'manager'].includes(userRole);
+  // Permission per-user (default mengikuti role, bisa dioverride Administrator dari halaman Karyawan)
+  const isFinance = hasPermission ? hasPermission('transfer') : userRole === 'team_finance';
+  const canManage = hasPermission ? hasPermission('approve') : ['administrator', 'manager', 'bod'].includes(userRole);
+  const canDelete = hasPermission ? hasPermission('delete_penyelesaian') : ['administrator', 'manager'].includes(userRole);
+  const canEdit = hasPermission ? hasPermission('edit_penyelesaian') : ['administrator', 'manager', 'bod'].includes(userRole);
   const isAdmin = userRole === 'administrator';
-  const canViewConfidential = ['administrator', 'bod', 'team_finance', 'hrd'].includes(userRole?.toLowerCase());
+  const canViewConfidential = hasPermission ? hasPermission('view_confidential') : ['administrator', 'bod', 'team_finance', 'hrd'].includes(userRole?.toLowerCase());
 
   const isLocked = (item) => {
     if (isAdmin) return false;
@@ -1292,26 +1294,26 @@ const Penyelesaian = () => {
                               </button>
                             )}
 
-                            {/* Aksi Edit/Delete untuk Admin dan Manager */}
+                            {/* Aksi Edit/Delete — edit & hapus mengikuti permission per-user */}
+                            {canEdit && !isLocked(penyelesaian) && (
+                              <button
+                                onClick={() => handleEdit(penyelesaian)}
+                                className="flex items-center space-x-1 px-3 py-1.5 bg-amber-50 text-amber-600 rounded-lg hover:bg-amber-100 transition-colors text-sm font-medium"
+                                title="Edit"
+                              >
+                                <Edit2 className="w-4 h-4" />
+                                <span>Edit</span>
+                              </button>
+                            )}
                             {canDelete && !isLocked(penyelesaian) && (
-                              <>
-                                <button
-                                  onClick={() => handleEdit(penyelesaian)}
-                                  className="flex items-center space-x-1 px-3 py-1.5 bg-amber-50 text-amber-600 rounded-lg hover:bg-amber-100 transition-colors text-sm font-medium"
-                                  title="Edit"
-                                >
-                                  <Edit2 className="w-4 h-4" />
-                                  <span>Edit</span>
-                                </button>
-                                <button
-                                  onClick={() => handleDelete(penyelesaian)}
-                                  className="flex items-center space-x-1 px-3 py-1.5 bg-rose-50 text-rose-600 rounded-lg hover:bg-rose-100 transition-colors text-sm font-medium"
-                                  title="Hapus"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                  <span>Hapus</span>
-                                </button>
-                              </>
+                              <button
+                                onClick={() => handleDelete(penyelesaian)}
+                                className="flex items-center space-x-1 px-3 py-1.5 bg-rose-50 text-rose-600 rounded-lg hover:bg-rose-100 transition-colors text-sm font-medium"
+                                title="Hapus"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                                <span>Hapus</span>
+                              </button>
                             )}
                           </div>
                         </td>

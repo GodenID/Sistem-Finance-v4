@@ -18,13 +18,14 @@ import jsPDF from 'jspdf';
 const PaymentRequest = () => {
   const navigate = useNavigate();
   const { vendors, addVendor, getVendorById, searchVendors, getActiveVendors } = useVendor();
-  const { userName, userRole, userId } = useAuth();
+  const { userName, userRole, userId, hasPermission } = useAuth();
   const { showToast } = useToast();
 
   // Check if user is manager (can edit/delete/approve)
-  const canManage = ['administrator', 'manager', 'bod'].includes(userRole);
+  // Permission per-user (default mengikuti role, bisa dioverride Administrator)
+  const canManage = hasPermission ? hasPermission('approve') : ['administrator', 'manager', 'bod'].includes(userRole);
   const isGuest = userRole === 'guest';
-  const isFinance = userRole === 'team_finance';
+  const isFinance = hasPermission ? hasPermission('transfer') : userRole === 'team_finance';
 
   const [filterStatus, setFilterStatus] = useState('all'); // all, belum-transfer, sudah-transfer
   const ITEMS_PER_PAGE = 10;

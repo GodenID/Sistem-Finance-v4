@@ -16,7 +16,7 @@ const authenticateToken = async (req, res, next) => {
 
         // Fetch user from database to ensure they still exist and get latest role
         const result = await db.query(
-            'SELECT id, username, name, role, email, status FROM users WHERE id = $1',
+            'SELECT id, username, name, role, email, status, permissions FROM users WHERE id = $1',
             [decoded.userId]
         );
 

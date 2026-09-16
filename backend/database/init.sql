@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS users (
     email_notifications_enabled BOOLEAN DEFAULT true,
     status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'suspended')),
     role VARCHAR(50) NOT NULL CHECK (role IN ('administrator', 'team_finance', 'bod', 'hrd', 'staff', 'manager', 'guest')),
+    permissions JSONB DEFAULT NULL, -- override permission per-user oleh Administrator (NULL = default role)
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE
 );
