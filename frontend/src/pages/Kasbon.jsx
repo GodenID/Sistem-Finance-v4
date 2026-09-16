@@ -12,6 +12,7 @@ import QLLink from '../components/QLLink';
 import { createRecord, updateRecord, deleteRecord, bulkDeleteRecords, uploadFile, countRecords } from '../lib/api';
 import { usePaginatedTable } from '../hooks/usePaginatedTable';
 import { logActivity } from '../lib/auditLog';
+import { deleteFilesOfRecords, uploadThenSave } from '../utils/fileCleanup';
 import ConfirmDialog from '../components/ConfirmDialog';
 import PasteUpload from '../components/PasteUpload';
 import { useRealtimeSubscription } from '../hooks/useRealtimeSubscription';
@@ -410,6 +411,8 @@ const Kasbon = () => {
       onConfirm: async () => {
         try {
           await deleteRecord('kasbon', kasbon.id);
+          // Hapus file R2 milik record agar tidak jadi file yatim (best-effort)
+          await deleteFilesOfRecords([kasbon]);
           // Log activity
           await logActivity({
             tableName: 'kasbon',
@@ -466,6 +469,12 @@ const Kasbon = () => {
         setIsDeleting(true);
         try {
           await bulkDeleteRecords('kasbon', selectedItems);
+
+          // Hapus file R2 milik record yang dihapus (best-effort)
+          const deletedItems = selectedItems
+            .map((id) => kasbonRequests.find((k) => k.id === id))
+            .filter(Boolean);
+          await deleteFilesOfRecords(deletedItems);
 
           // Log activity untuk setiap item yang dihapus
           for (const id of selectedItems) {
@@ -686,14 +695,14 @@ const Kasbon = () => {
 
     setUploadingBuktiTransfer(true);
     try {
-      // Upload file ke R2
-      const result = await uploadFile(buktiTransferFile, 'kasbon', transferringKasbon.nomorKasbon);
-
-      // Update record dengan bukti transfer dan status
-      await updateRecord('kasbon', transferringKasbon.id, {
-        bukti_transfer: result.url,
-        status_transfer: 'Sudah Transfer'
-      });
+      // Upload lalu update — bila update gagal, file ikut dihapus (anti yatim)
+      const { result } = await uploadThenSave(
+        () => uploadFile(buktiTransferFile, 'kasbon', transferringKasbon.nomorKasbon),
+        (uploadResult) => updateRecord('kasbon', transferringKasbon.id, {
+          bukti_transfer: uploadResult.url,
+          status_transfer: 'Sudah Transfer'
+        })
+      );
 
       // Log activity
       await logActivity({

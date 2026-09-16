@@ -13,6 +13,7 @@ import QLLink from '../components/QLLink';
 import { createRecord, updateRecord, deleteRecord, bulkDeleteRecords, uploadFile, countRecords } from '../lib/api';
 import { usePaginatedTable } from '../hooks/usePaginatedTable';
 import { logActivity } from '../lib/auditLog';
+import { deleteFilesOfRecords, deleteReplacedFiles, deleteR2Files, uploadThenSave } from '../utils/fileCleanup';
 import ConfirmDialog from '../components/ConfirmDialog';
 import PasteUpload from '../components/PasteUpload';
 import MultiFileUpload from '../components/MultiFileUpload';
@@ -482,8 +483,9 @@ const Klaim = () => {
         const namaKaryawanValue = formData.namaKaryawan || '';
         // Upload new files if any
         let uploadedUrls = [...(formData.lampiran || [])];
+        let newUrls = [];
         if (selectedFiles.length > 0) {
-          const newUrls = await uploadAllFiles(editingKlaim.nomorKlaim);
+          newUrls = await uploadAllFiles(editingKlaim.nomorKlaim);
           uploadedUrls = [...uploadedUrls, ...newUrls];
         }
 
@@ -503,7 +505,15 @@ const Klaim = () => {
           nama_karyawan: namaKaryawanValue
         };
 
-        await updateRecord('klaim', editingKlaim.id, updateData);
+        try {
+          await updateRecord('klaim', editingKlaim.id, updateData);
+        } catch (updateErr) {
+          // Update gagal — hapus file yang baru diupload agar tidak yatim
+          await deleteR2Files(newUrls);
+          throw updateErr;
+        }
+        // Hapus file lama yang sudah tidak dipakai lagi (best-effort)
+        await deleteReplacedFiles(editingKlaim.lampiran, uploadedUrls);
 
         // Log activity untuk UPDATE
         await logActivity({
@@ -558,7 +568,13 @@ const Klaim = () => {
           is_confidential: isBOD || isHRD,
         };
 
-        const createdKlaim = await createRecord('klaim', newKlaimData);
+        try {
+          await createRecord('klaim', newKlaimData);
+        } catch (createErr) {
+          // Simpan gagal — hapus file yang sudah terupload agar tidak yatim
+          await deleteR2Files(uploadedUrls);
+          throw createErr;
+        }
 
         // Log activity untuk CREATE
         await logActivity({
@@ -661,6 +677,8 @@ const Klaim = () => {
       onConfirm: async () => {
         try {
           await deleteRecord('klaim', klaim.id);
+          // Hapus file R2 milik record agar tidak jadi file yatim (best-effort)
+          await deleteFilesOfRecords([klaim]);
           // Log activity
           await logActivity({
             tableName: 'klaim',
@@ -717,6 +735,12 @@ const Klaim = () => {
         setIsDeleting(true);
         try {
           await bulkDeleteRecords('klaim', selectedItems);
+
+          // Hapus file R2 milik record yang dihapus (best-effort)
+          const deletedItems = selectedItems
+            .map((id) => klaimRequests.find((k) => k.id === id))
+            .filter(Boolean);
+          await deleteFilesOfRecords(deletedItems);
 
           // Log activity untuk setiap item yang dihapus
           for (const id of selectedItems) {
@@ -937,14 +961,14 @@ const Klaim = () => {
 
     setUploadingBuktiTransfer(true);
     try {
-      // Upload file ke R2
-      const result = await uploadFile(buktiTransferFile, 'klaim', transferringKlaim.nomorKlaim, userName);
-
-      // Update record dengan bukti transfer dan status
-      await updateRecord('klaim', transferringKlaim.id, {
-        bukti_transfer: result.url,
-        status_transfer: 'Sudah Transfer'
-      });
+      // Upload lalu update — bila update gagal, file ikut dihapus (anti yatim)
+      const { result } = await uploadThenSave(
+        () => uploadFile(buktiTransferFile, 'klaim', transferringKlaim.nomorKlaim, userName),
+        (uploadResult) => updateRecord('klaim', transferringKlaim.id, {
+          bukti_transfer: uploadResult.url,
+          status_transfer: 'Sudah Transfer'
+        })
+      );
 
       // Log activity
       await logActivity({

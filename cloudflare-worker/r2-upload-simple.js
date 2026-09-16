@@ -13,14 +13,110 @@ export default {
     // CORS headers - allow semua origin untuk development, atau spesifik untuk production
     const corsHeaders = {
       'Access-Control-Allow-Origin': origin || '*',
-      'Access-Control-Allow-Methods': 'POST, OPTIONS, GET',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS, GET, DELETE',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Delete-Key',
       'Access-Control-Max-Age': '86400', // 24 hours
     };
 
     // Handle preflight request
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: corsHeaders });
+    }
+
+    const getBucket = () => {
+      const r2Bucket = env.MY_BUCKET || env.R2_BUCKET;
+      if (!r2Bucket) throw new Error('R2 bucket binding not configured');
+      return r2Bucket;
+    };
+
+    // Kunci hapus: bila DELETE_SECRET di-set di env worker, request DELETE
+    // wajib membawa header x-delete-key yang sama. Bila belum di-set,
+    // delete diizinkan (mode dev) dengan peringatan di log.
+    const checkDeleteKey = () => {
+      const secret = env.DELETE_SECRET?.trim();
+      if (!secret) {
+        console.warn('⚠️ DELETE_SECRET belum di-set — endpoint hapus file terbuka. Set secret di worker env.');
+        return true;
+      }
+      return request.headers.get('X-Delete-Key') === secret;
+    };
+
+    const url = new URL(request.url);
+
+    // Internal endpoint: daftar isi bucket untuk sweeper file yatim.
+    // GET /__list?prefix=...&cursor=...&limit=...
+    if (url.pathname === '/__list') {
+      if (request.method !== 'GET') {
+        return new Response(
+          JSON.stringify({ error: 'Method not allowed' }),
+          { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      try {
+        const r2Bucket = getBucket();
+        const listed = await r2Bucket.list({
+          prefix: url.searchParams.get('prefix') || undefined,
+          cursor: url.searchParams.get('cursor') || undefined,
+          limit: Math.min(parseInt(url.searchParams.get('limit') || '500', 10) || 500, 1000),
+        });
+        return new Response(
+          JSON.stringify({
+            objects: (listed.objects || []).map((o) => ({
+              key: o.key,
+              size: o.size,
+              uploaded: o.uploaded,
+            })),
+            truncated: !!listed.truncated,
+            cursor: listed.truncated ? listed.cursor : null,
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      } catch (error) {
+        console.error('Error listing bucket:', error);
+        return new Response(
+          JSON.stringify({ error: error.message }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+
+    // Hapus file: DELETE /<file-path> atau DELETE /?key=<file-path>
+    if (request.method === 'DELETE') {
+      if (!checkDeleteKey()) {
+        return new Response(
+          JSON.stringify({ error: 'Delete key salah atau tidak ada' }),
+          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      try {
+        const key = url.searchParams.get('key') || url.pathname.slice(1);
+        if (!key) {
+          return new Response(
+            JSON.stringify({ error: 'File path required' }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+        // Cegah path traversal
+        if (key.includes('..') || key.startsWith('/')) {
+          return new Response(
+            JSON.stringify({ error: 'File path tidak valid' }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+        const r2Bucket = getBucket();
+        await r2Bucket.delete(decodeURIComponent(key));
+        console.log('🗑️ File dihapus:', key);
+        return new Response(
+          JSON.stringify({ success: true, key }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      } catch (error) {
+        console.error('Error deleting file:', error);
+        return new Response(
+          JSON.stringify({ error: error.message }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
     }
 
     // Handle GET requests - proxy file downloads with CORS

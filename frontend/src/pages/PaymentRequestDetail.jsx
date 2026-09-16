@@ -7,6 +7,7 @@ import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import { useNotification } from '../context/NotificationContext';
 import { logActivity } from '../lib/auditLog';
+import { uploadThenSave } from '../utils/fileCleanup';
 import TipeBadge from '../components/TipeBadge';
 import IdPerusahaanBadge from '../components/IdPerusahaanBadge';
 import QLLink from '../components/QLLink';
@@ -155,14 +156,14 @@ const PaymentRequestDetail = () => {
 
     setIsUploading(true);
     try {
-      // Upload bukti transfer
-      const result = await uploadFile(buktiTransferFile, 'payment-requests', pr.nomor_pr);
-
-      // Update record
-      await updateRecord('payment_requests', pr.id, {
-        bukti_transfer: result.url,
-        status_transfer: 'Sudah Transfer'
-      });
+      // Upload lalu update — bila update gagal, file ikut dihapus (anti yatim)
+      const { result } = await uploadThenSave(
+        () => uploadFile(buktiTransferFile, 'payment-requests', pr.nomor_pr),
+        (uploadResult) => updateRecord('payment_requests', pr.id, {
+          bukti_transfer: uploadResult.url,
+          status_transfer: 'Sudah Transfer'
+        })
+      );
 
       // Log activity
       await logActivity({

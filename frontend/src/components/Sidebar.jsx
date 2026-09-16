@@ -19,7 +19,8 @@ import {
   BookOpen,
   Repeat,
   Wrench,
-  ImageIcon
+  ImageIcon,
+  Archive
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useAppVersion } from '../lib/version';
@@ -76,6 +77,11 @@ const Sidebar = ({ isOpen, setIsOpen }) => {
   // Tambahkan menu Backup hanya untuk administrator
   if (canAccessKaryawan) {
     menuItems.push({ icon: HardDrive, label: 'Backup', path: '/backup' });
+  }
+
+  // Storage & file yatim hanya untuk administrator
+  if (canAccessKaryawan) {
+    menuItems.push({ icon: Archive, label: 'Storage', path: '/storage' });
   }
 
   // Tambahkan menu Maintenance hanya untuk administrator

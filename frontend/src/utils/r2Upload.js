@@ -15,6 +15,91 @@ if (!WORKER_URL || WORKER_URL.includes('your-account')) {
   console.error('💡 Contoh: VITE_R2_WORKER_URL=https://r2-upload-worker.your-account.workers.dev');
 }
 
+// Kunci hapus file (opsional — samakan dengan DELETE_SECRET di env worker).
+// Bila kosong, worker tetap mengizinkan hapus (mode dev) sambil log peringatan.
+const DELETE_KEY = import.meta.env.VITE_R2_DELETE_KEY || '';
+
+/**
+ * Ambil object key R2 dari URL publik file.
+ * Contoh: https://files.prasastigroup.id/klaim/2025/.../x.jpg
+ *   → klaim/2025/.../x.jpg
+ * Bila input bukan URL (sudah berupa key), dikembalikan apa adanya.
+ */
+export function extractR2Key(fileUrlOrKey) {
+  if (!fileUrlOrKey || typeof fileUrlOrKey !== 'string') return null;
+  const trimmed = fileUrlOrKey.trim();
+  if (!/^https?:\/\//i.test(trimmed)) return trimmed.replace(/^\/+/, '') || null;
+  try {
+    const key = new URL(trimmed).pathname.replace(/^\/+/, '');
+    return key || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Hapus satu file di R2 via Worker (best-effort: gagal = return false, tidak throw).
+ * @param {string} fileUrlOrKey - URL publik atau object key
+ * @returns {Promise<boolean>} true bila terhapus (atau worker OK)
+ */
+export async function deleteR2File(fileUrlOrKey) {
+  try {
+    if (!WORKER_URL || WORKER_URL.includes('your-account')) return false;
+    const key = extractR2Key(fileUrlOrKey);
+    if (!key) return false;
+
+    const response = await fetch(`${WORKER_URL}?key=${encodeURIComponent(key)}`, {
+      method: 'DELETE',
+      headers: DELETE_KEY ? { 'X-Delete-Key': DELETE_KEY } : {},
+    });
+    if (!response.ok) {
+      console.warn('⚠️ Gagal menghapus file R2:', key, response.status);
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.warn('⚠️ Gagal menghapus file R2:', error?.message);
+    return false;
+  }
+}
+
+/**
+ * Hapus banyak file sekaligus (best-effort, tidak throw).
+ * @param {Array<string>} urls - daftar URL/key
+ * @returns {Promise<{deleted: string[], failed: string[]}>}
+ */
+export async function deleteR2Files(urls) {
+  const list = [...new Set((urls || []).filter(Boolean))];
+  const deleted = [];
+  const failed = [];
+  // Batasi konkurensi agar tidak membanjiri worker
+  const CONCURRENCY = 5;
+  for (let i = 0; i < list.length; i += CONCURRENCY) {
+    const batch = list.slice(i, i + CONCURRENCY);
+    const results = await Promise.all(batch.map((u) => deleteR2File(u)));
+    batch.forEach((u, idx) => (results[idx] ? deleted.push(u) : failed.push(u)));
+  }
+  return { deleted, failed };
+}
+
+/**
+ * Daftar isi bucket via worker (untuk sweeper file yatim).
+ * @param {{prefix?: string, cursor?: string|null, limit?: number}} opts
+ * @returns {Promise<{objects: Array<{key:string,size:number,uploaded:string}>, truncated: boolean, cursor: string|null}>}
+ */
+export async function listR2Objects({ prefix = '', cursor = null, limit = 500 } = {}) {
+  if (!WORKER_URL || WORKER_URL.includes('your-account')) {
+    throw new Error('Worker URL belum dikonfigurasi');
+  }
+  const params = new URLSearchParams();
+  if (prefix) params.set('prefix', prefix);
+  if (cursor) params.set('cursor', cursor);
+  params.set('limit', String(limit));
+  const response = await fetch(`${WORKER_URL}__list?${params.toString()}`);
+  if (!response.ok) throw new Error(`Gagal membaca isi storage (${response.status})`);
+  return response.json();
+}
+
 /**
  * Upload file ke R2 melalui Cloudflare Worker
  * Images will be auto-compressed before upload

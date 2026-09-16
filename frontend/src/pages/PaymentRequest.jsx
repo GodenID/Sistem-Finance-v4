@@ -8,6 +8,7 @@ import { useNotification } from '../context/NotificationContext';
 import { createRecord, updateRecord, deleteRecord, bulkDeleteRecords, uploadFile, countRecords } from '../lib/api';
 import { usePaginatedTable } from '../hooks/usePaginatedTable';
 import { logActivity } from '../lib/auditLog';
+import { deleteFilesOfRecords, deleteReplacedFiles, deleteR2Files, uploadThenSave } from '../utils/fileCleanup';
 import { TIPE_OPTIONS, ID_PERUSAHAAN_OPTIONS, getTipeOptionsByRole, getIdPerusahaanOptionsByRole } from '../constants/companyTypes';
 import TipeBadge from '../components/TipeBadge';
 import IdPerusahaanBadge from '../components/IdPerusahaanBadge';
@@ -449,8 +450,9 @@ const PaymentRequest = () => {
         const namaKaryawanValue = formData.namaKaryawan || '';
         // Upload new files if any
         let uploadedUrls = [...(formData.lampiran || [])];
+        let newUrls = [];
         if (selectedFiles.length > 0) {
-          const newUrls = await uploadAllFiles(editingPR.nomorPr);
+          newUrls = await uploadAllFiles(editingPR.nomorPr);
           uploadedUrls = [...uploadedUrls, ...newUrls];
         }
 
@@ -469,7 +471,15 @@ const PaymentRequest = () => {
           nama_karyawan: namaKaryawanValue
         };
 
-        await updateRecord('payment_requests', editingPR.id, updateData);
+        try {
+          await updateRecord('payment_requests', editingPR.id, updateData);
+        } catch (updateErr) {
+          // Update gagal — hapus file yang baru diupload agar tidak yatim
+          await deleteR2Files(newUrls);
+          throw updateErr;
+        }
+        // Hapus file lama yang sudah tidak dipakai lagi (best-effort)
+        await deleteReplacedFiles(editingPR.lampiran, uploadedUrls);
         showToast('Payment Request berhasil diperbarui', 'success');
       } else {
 
@@ -508,7 +518,14 @@ const PaymentRequest = () => {
           is_confidential: isBOD || isHRD
         };
 
-        const createdPR = await createRecord('payment_requests', newPRData);
+        let createdPR = null;
+        try {
+          createdPR = await createRecord('payment_requests', newPRData);
+        } catch (createErr) {
+          // Simpan gagal — hapus file yang sudah terupload agar tidak yatim
+          await deleteR2Files(uploadedUrls);
+          throw createErr;
+        }
 
         // Log activity untuk CREATE
         await logActivity({
@@ -599,6 +616,12 @@ const PaymentRequest = () => {
         try {
           await bulkDeleteRecords('payment_requests', selectedItems);
 
+          // Hapus file R2 milik record yang dihapus (best-effort)
+          const deletedItems = selectedItems
+            .map((id) => paymentRequests.find((p) => p.id === id))
+            .filter(Boolean);
+          await deleteFilesOfRecords(deletedItems);
+
           // Log activity untuk setiap item yang dihapus
           for (const id of selectedItems) {
             const pr = paymentRequests.find(p => p.id === id);
@@ -679,6 +702,8 @@ const PaymentRequest = () => {
       onConfirm: async () => {
         try {
           await deleteRecord('payment_requests', pr.id);
+          // Hapus file R2 milik record agar tidak jadi file yatim (best-effort)
+          await deleteFilesOfRecords([pr]);
           showToast('Payment Request berhasil dihapus', 'success');
           await refreshData();
         } catch (error) {
@@ -828,14 +853,14 @@ const PaymentRequest = () => {
 
     setUploadingBuktiTransfer(true);
     try {
-      // Upload file ke R2
-      const result = await uploadFile(buktiTransferFile, 'payment-requests', transferringPR.nomorPr, userName);
-
-      // Update record dengan bukti transfer dan status
-      await updateRecord('payment_requests', transferringPR.id, {
-        bukti_transfer: result.url,
-        status_transfer: 'Sudah Transfer'
-      });
+      // Upload lalu update — bila update gagal, file ikut dihapus (anti yatim)
+      const { result } = await uploadThenSave(
+        () => uploadFile(buktiTransferFile, 'payment-requests', transferringPR.nomorPr, userName),
+        (uploadResult) => updateRecord('payment_requests', transferringPR.id, {
+          bukti_transfer: uploadResult.url,
+          status_transfer: 'Sudah Transfer'
+        })
+      );
 
       // Log activity
       await logActivity({

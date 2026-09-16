@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Printer, FileText, Calendar, User, DollarSign, CheckCircle, XCircle, Wallet, Eye, Download, FileSpreadsheet, Loader2, Upload, X } from 'lucide-react';
 import { getRecordById, updateRecord, uploadFile } from '../lib/api';
 import { logActivity } from '../lib/auditLog';
+import { uploadThenSave } from '../utils/fileCleanup';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { useNotification } from '../context/NotificationContext';
@@ -188,14 +189,14 @@ const PenyelesaianDetail = () => {
 
         setIsUploadingBuktiKekurangan(true);
         try {
-            // Upload file
-            const result = await uploadFile(buktiKekuranganFile, 'penyelesaian', penyelesaian.nomor_penyelesaian);
-
-            // Update record with bukti_kekurangan URL and mark as Selesai
-            await updateRecord('penyelesaian', penyelesaian.id, {
-                bukti_kekurangan: result.url,
-                status_penyelesaian: 'Selesai'
-            });
+            // Upload lalu update — bila update gagal, file ikut dihapus (anti yatim)
+            const { result } = await uploadThenSave(
+                () => uploadFile(buktiKekuranganFile, 'penyelesaian', penyelesaian.nomor_penyelesaian),
+                (uploadResult) => updateRecord('penyelesaian', penyelesaian.id, {
+                    bukti_kekurangan: uploadResult.url,
+                    status_penyelesaian: 'Selesai'
+                })
+            );
 
             // Log activity
             await logActivity({

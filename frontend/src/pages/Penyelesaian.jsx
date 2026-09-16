@@ -8,6 +8,7 @@ import { useNotification } from '../context/NotificationContext';
 import { createRecord, updateRecord, deleteRecord, uploadFile, countRecords, getLightweightRows } from '../lib/api';
 import { usePaginatedTable } from '../hooks/usePaginatedTable';
 import { logActivity } from '../lib/auditLog';
+import { deleteFilesOfRecords, deleteR2Files, uploadThenSave } from '../utils/fileCleanup';
 import ConfirmDialog from '../components/ConfirmDialog';
 import PasteUpload from '../components/PasteUpload';
 import QLInfo from '../components/QLInfo';
@@ -454,6 +455,10 @@ const Penyelesaian = () => {
         clearInterval(progressInterval);
         setUploadProgress(100);
 
+        // File lama yang tertimpa tidak dipakai lagi — hapus agar tidak yatim
+        if (formData.lampiran && formData.lampiran !== result.url) {
+          deleteR2Files([formData.lampiran]);
+        }
         setFormData(prev => ({ ...prev, lampiran: result.url }));
         showToast('File berhasil diupload', 'success');
       } catch (error) {
@@ -505,6 +510,10 @@ const Penyelesaian = () => {
         clearInterval(progressInterval);
         setUploadProgressPengembalian(100);
 
+        // File lama yang tertimpa tidak dipakai lagi — hapus agar tidak yatim
+        if (formData.lampiranPengembalian && formData.lampiranPengembalian !== result.url) {
+          deleteR2Files([formData.lampiranPengembalian]);
+        }
         setFormData(prev => ({ ...prev, lampiranPengembalian: result.url }));
         showToast('Bukti pengembalian berhasil diupload', 'success');
       } catch (error) {
@@ -895,6 +904,8 @@ const Penyelesaian = () => {
           });
 
           await deleteRecord('penyelesaian', penyelesaian.id);
+          // Hapus file R2 milik record agar tidak jadi file yatim (best-effort)
+          await deleteFilesOfRecords([penyelesaian]);
           showToast('Penyelesaian berhasil dihapus', 'success');
           await refreshData();
           refreshNotifications();
@@ -956,14 +967,14 @@ const Penyelesaian = () => {
 
     setIsUploadingBuktiKekurangan(true);
     try {
-      // Upload file
-      const result = await uploadFile(buktiKekuranganFile, 'penyelesaian', selectedPenyelesaianForKekurangan.nomorPenyelesaian);
-
-      // Update record with bukti_kekurangan URL and mark as Selesai
-      await updateRecord('penyelesaian', selectedPenyelesaianForKekurangan.id, {
-        bukti_kekurangan: result.url,
-        status_penyelesaian: 'Selesai'
-      });
+      // Upload lalu update — bila update gagal, file ikut dihapus (anti yatim)
+      const { result } = await uploadThenSave(
+        () => uploadFile(buktiKekuranganFile, 'penyelesaian', selectedPenyelesaianForKekurangan.nomorPenyelesaian),
+        (uploadResult) => updateRecord('penyelesaian', selectedPenyelesaianForKekurangan.id, {
+          bukti_kekurangan: uploadResult.url,
+          status_penyelesaian: 'Selesai'
+        })
+      );
 
       // Log activity
       await logActivity({
@@ -1797,6 +1808,10 @@ const Penyelesaian = () => {
                               <button
                                 type="button"
                                 onClick={() => {
+                                  // Hapus file dari storage juga agar tidak yatim
+                                  if (formData.lampiranPengembalian) {
+                                    deleteR2Files([formData.lampiranPengembalian]);
+                                  }
                                   setFileNamePengembalian('');
                                   setFileSizePengembalian(0);
                                   setFormData(prev => ({ ...prev, lampiranPengembalian: null }));
@@ -1894,6 +1909,10 @@ const Penyelesaian = () => {
                           <button
                             type="button"
                             onClick={() => {
+                              // Hapus file dari storage juga agar tidak yatim
+                              if (formData.lampiran) {
+                                deleteR2Files([formData.lampiran]);
+                              }
                               setFileName('');
                               setFileSize(0);
                               setFormData(prev => ({ ...prev, lampiran: null }));

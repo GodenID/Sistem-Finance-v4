@@ -33,6 +33,7 @@ import { TIPE_OPTIONS, ID_PERUSAHAAN_OPTIONS, getTipeOptionsByRole, getIdPerusah
 import ConfirmModal from '../components/ConfirmModal';
 import PasteUpload from '../components/PasteUpload';
 import { uploadFileToR2 } from '../utils/r2Upload';
+import { uploadThenSave } from '../utils/fileCleanup';
 
 const RecurringTransactions = () => {
   const navigate = useNavigate();
@@ -413,22 +414,22 @@ const RecurringTransactions = () => {
     try {
       setIsUploading(true);
 
-      // Upload file to R2
-      const uploadResult = await uploadFileToR2(
-        transferFile,
-        'recurring',
-        `transfer-${transferringInstance.id}`
+      // Upload lalu update — bila update gagal, file ikut dihapus (anti yatim)
+      await uploadThenSave(
+        () => uploadFileToR2(
+          transferFile,
+          'recurring',
+          `transfer-${transferringInstance.id}`
+        ),
+        (upload) => updateRecord('recurring_instances', transferringInstance.id, {
+          status: 'transferred',
+          bukti_transfer: upload.url,
+          transferred_at: new Date().toISOString(),
+          transferred_by: userId,
+          transferred_by_name: userName,
+          notes: transferNotes || null
+        })
       );
-
-      // Update instance with bukti transfer
-      await updateRecord('recurring_instances', transferringInstance.id, {
-        status: 'transferred',
-        bukti_transfer: uploadResult.url,
-        transferred_at: new Date().toISOString(),
-        transferred_by: userId,
-        transferred_by_name: userName,
-        notes: transferNotes || null
-      });
 
       // Get recurring transaction details for next instance
       const recurring = transferringInstance.recurring;
@@ -570,20 +571,20 @@ const RecurringTransactions = () => {
     try {
       setIsUploadingInvoice(true);
 
-      // Upload file to R2
-      const uploadResult = await uploadFileToR2(
-        invoiceFile,
-        'recurring',
-        `invoice-${invoiceInstance.id}`
+      // Upload lalu update — bila update gagal, file ikut dihapus (anti yatim)
+      await uploadThenSave(
+        () => uploadFileToR2(
+          invoiceFile,
+          'recurring',
+          `invoice-${invoiceInstance.id}`
+        ),
+        (upload) => updateRecord('recurring_instances', invoiceInstance.id, {
+          invoice_url: upload.url,
+          invoice_uploaded_at: new Date().toISOString(),
+          invoice_uploaded_by: userId,
+          invoice_uploaded_by_name: userName
+        })
       );
-
-      // Update instance with invoice URL
-      await updateRecord('recurring_instances', invoiceInstance.id, {
-        invoice_url: uploadResult.url,
-        invoice_uploaded_at: new Date().toISOString(),
-        invoice_uploaded_by: userId,
-        invoice_uploaded_by_name: userName
-      });
 
       showToast('Invoice berhasil diupload', 'success');
       setShowInvoiceModal(false);

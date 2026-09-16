@@ -26,6 +26,7 @@ const Laporan = React.lazy(() => import('./pages/Laporan'));
 const ActivityLog = React.lazy(() => import('./pages/ActivityLog'));
 const Karyawan = React.lazy(() => import('./pages/Karyawan'));
 const Backup = React.lazy(() => import('./pages/Backup'));
+const Storage = React.lazy(() => import('./pages/Storage'));
 const Changelog = React.lazy(() => import('./pages/Changelog'));
 const Performance = React.lazy(() => import('./pages/Performance'));
 const Profile = React.lazy(() => import('./pages/Profile'));
@@ -119,6 +120,14 @@ function App() {
                                     element={
                                       <AdminRoute>
                                         <Backup />
+                                      </AdminRoute>
+                                    }
+                                  />
+                                  <Route
+                                    path="/storage"
+                                    element={
+                                      <AdminRoute>
+                                        <Storage />
                                       </AdminRoute>
                                     }
                                   />

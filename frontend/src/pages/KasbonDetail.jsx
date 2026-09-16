@@ -6,6 +6,7 @@ import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import { useNotification } from '../context/NotificationContext';
 import { logActivity } from '../lib/auditLog';
+import { uploadThenSave } from '../utils/fileCleanup';
 import TipeBadge from '../components/TipeBadge';
 import IdPerusahaanBadge from '../components/IdPerusahaanBadge';
 import QLLink from '../components/QLLink';
@@ -138,12 +139,14 @@ const KasbonDetail = () => {
 
         setIsUploading(true);
         try {
-            const result = await uploadFile(buktiTransferFile, 'kasbon', kasbon.nomor_kasbon);
-
-            await updateRecord('kasbon', kasbon.id, {
-                bukti_transfer: result.url,
-                status_transfer: 'Sudah Transfer'
-            });
+            // Upload lalu update — bila update gagal, file ikut dihapus (anti yatim)
+            const { result } = await uploadThenSave(
+                () => uploadFile(buktiTransferFile, 'kasbon', kasbon.nomor_kasbon),
+                (uploadResult) => updateRecord('kasbon', kasbon.id, {
+                    bukti_transfer: uploadResult.url,
+                    status_transfer: 'Sudah Transfer'
+                })
+            );
 
             await logActivity({
                 tableName: 'kasbon',
