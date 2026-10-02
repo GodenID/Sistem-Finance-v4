@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Printer, FileText, Calendar, User, DollarSign, CheckCircle, XCircle, Wallet, Eye, Download, FileSpreadsheet, Loader2, Upload, X } from 'lucide-react';
-import { getRecordById, updateRecord, uploadFile } from '../lib/api';
+import { getRecordById, updateRecord, uploadFile, getKasbonByNomor } from '../lib/api';
 import { logActivity } from '../lib/auditLog';
 import { uploadThenSave } from '../utils/fileCleanup';
 import { useAuth } from '../context/AuthContext';
@@ -25,6 +25,7 @@ const PenyelesaianDetail = () => {
     const canManage = hasPermission ? hasPermission('approve') : ['administrator', 'manager', 'bod'].includes(userRole);
     const canViewConfidential = hasPermission ? hasPermission('view_confidential') : ['administrator', 'bod', 'team_finance', 'hrd'].includes(userRole?.toLowerCase());
     const [penyelesaian, setPenyelesaian] = useState(null);
+    const [kasbonId, setKasbonId] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isExportingPdf, setIsExportingPdf] = useState(false);
     const [confirmDialog, setConfirmDialog] = useState({
@@ -46,6 +47,15 @@ const PenyelesaianDetail = () => {
                 setIsLoading(true);
                 const data = await getRecordById('penyelesaian', id);
                 setPenyelesaian(data);
+                // Resolve kasbon id agar nomor kasbon bisa dibuka via Link (klik kanan > open in new tab)
+                if (data?.nomor_kasbon) {
+                    try {
+                        const kasbon = await getKasbonByNomor(data.nomor_kasbon);
+                        if (kasbon?.id) setKasbonId(kasbon.id);
+                    } catch (e) {
+                        console.warn('Gagal resolve kasbon id:', e);
+                    }
+                }
             } catch (error) {
                 console.error('Error fetching penyelesaian detail:', error);
                 showToast('Gagal memuat detail Penyelesaian', 'error');
@@ -62,6 +72,23 @@ const PenyelesaianDetail = () => {
 
     const formatRupiah = (angka) => {
         return new Intl.NumberFormat('id-ID').format(angka);
+    };
+
+    // Navigasi ke detail kasbon asal dari nomor kasbon
+    const handleKasbonDetail = async () => {
+        const nomorKasbon = penyelesaian?.nomor_kasbon;
+        if (!nomorKasbon) return;
+        try {
+            const kasbon = await getKasbonByNomor(nomorKasbon);
+            if (kasbon?.id) {
+                navigate(`/kasbon/${kasbon.id}`);
+            } else {
+                showToast(`Detail kasbon "${nomorKasbon}" tidak ditemukan`, 'error');
+            }
+        } catch (error) {
+            console.error('Error navigating to kasbon detail:', error);
+            showToast('Gagal membuka detail kasbon', 'error');
+        }
     };
 
     // Refetch function
@@ -677,7 +704,27 @@ const PenyelesaianDetail = () => {
                                 </div>
                                 <div>
                                     <label className="text-sm text-gray-500">Nomor Kasbon</label>
-                                    <p className="text-base font-semibold text-gray-800">{penyelesaian.nomor_kasbon || '-'}</p>
+                                    {penyelesaian.nomor_kasbon ? (
+                                        kasbonId ? (
+                                            <Link
+                                                to={`/kasbon/${kasbonId}`}
+                                                className="block text-base font-semibold text-emerald-600 hover:text-emerald-800 hover:underline cursor-pointer"
+                                                title={`Lihat detail kasbon ${penyelesaian.nomor_kasbon}`}
+                                            >
+                                                {penyelesaian.nomor_kasbon}
+                                            </Link>
+                                        ) : (
+                                            <button
+                                                onClick={handleKasbonDetail}
+                                                className="block text-base font-semibold text-emerald-600 hover:text-emerald-800 hover:underline cursor-pointer"
+                                                title={`Lihat detail kasbon ${penyelesaian.nomor_kasbon}`}
+                                            >
+                                                {penyelesaian.nomor_kasbon}
+                                            </button>
+                                        )
+                                    ) : (
+                                        <p className="text-base font-semibold text-gray-800">-</p>
+                                    )}
                                 </div>
                                 <div>
                                     <label className="text-sm text-gray-500">Nomor QL</label>

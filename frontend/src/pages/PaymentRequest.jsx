@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { ArrowLeft, Plus, Search, Filter, Download, Eye, X, Building2, ChevronLeft, ChevronRight, Paperclip, FileText, ExternalLink, Printer, Edit2, Trash2, CheckCircle, XCircle, Upload } from 'lucide-react';
 import { useVendor } from '../context/VendorContext';
 import { useAuth } from '../context/AuthContext';
@@ -51,6 +51,8 @@ const PaymentRequest = () => {
   const canViewConfidential = hasPermission ? hasPermission('view_confidential') : ['administrator', 'bod', 'team_finance', 'hrd'].includes(userRole?.toLowerCase());
 
   const [filterStatus, setFilterStatus] = useState('all'); // all, belum-transfer, sudah-transfer
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const ITEMS_PER_PAGE = 10;
 
   // State untuk bulk delete (hanya Administrator)
@@ -160,10 +162,13 @@ const PaymentRequest = () => {
   }, [getVendorById]);
 
   const serverFilters = useMemo(() => {
-    if (filterStatus === 'belum-transfer') return { status_transfer: 'Belum Transfer' };
-    if (filterStatus === 'sudah-transfer') return { status_transfer: 'Sudah Transfer' };
-    return {};
-  }, [filterStatus]);
+    const f = {};
+    if (filterStatus === 'belum-transfer') f.status_transfer = 'Belum Transfer';
+    if (filterStatus === 'sudah-transfer') f.status_transfer = 'Sudah Transfer';
+    if (dateFrom) f.start_date = dateFrom;
+    if (dateTo) f.end_date = dateTo;
+    return f;
+  }, [filterStatus, dateFrom, dateTo]);
 
   const {
     items: paymentRequests,
@@ -184,12 +189,12 @@ const PaymentRequest = () => {
     transform: transformPRRow,
   });
 
-  // Terapkan filter status UI ke query server (reset ke halaman 1)
+  // Terapkan filter status + tanggal UI ke query server (reset ke halaman 1)
   useEffect(() => {
     setServerFilters(serverFilters);
     setCurrentPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterStatus]);
+  }, [filterStatus, dateFrom, dateTo]);
 
   // Statistik kartu via HEAD count (4 request ringan, tanpa download row).
   const [prStats, setPrStats] = useState({ total: 0, belum: 0, sudah: 0, approved: 0 });
@@ -1366,17 +1371,60 @@ const PaymentRequest = () => {
             </div>
 
             {/* Clear Filter & Search */}
-            {(filterStatus !== 'all' || searchTerm) && (
+            {(filterStatus !== 'all' || searchTerm || dateFrom || dateTo) && (
               <button
                 onClick={() => {
                   setFilterStatus('all');
                   setSearchTerm('');
+                  setDateFrom('');
+                  setDateTo('');
                 }}
                 className="ml-auto px-4 py-2 bg-rose-50 text-rose-600 rounded-lg text-sm font-medium hover:bg-rose-100 transition-colors"
               >
                 Clear All
               </button>
             )}
+          </div>
+
+          {/* Filter Tanggal */}
+          <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+            <div className="flex items-center space-x-2">
+              <Filter className="w-4 h-4 text-gray-600" />
+              <span className="text-sm font-semibold text-gray-700">Filter Tanggal:</span>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-3 flex-1">
+              <div className="flex-1">
+                <label className="block text-xs font-medium text-gray-500 mb-1">Dari tanggal</label>
+                <input
+                  type="date"
+                  value={dateFrom}
+                  max={dateTo || undefined}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                />
+              </div>
+              <div className="flex-1">
+                <label className="block text-xs font-medium text-gray-500 mb-1">Sampai tanggal</label>
+                <input
+                  type="date"
+                  value={dateTo}
+                  min={dateFrom || undefined}
+                  onChange={(e) => setDateTo(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                />
+              </div>
+              {(dateFrom || dateTo) && (
+                <button
+                  onClick={() => {
+                    setDateFrom('');
+                    setDateTo('');
+                  }}
+                  className="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors self-end"
+                >
+                  Reset Tanggal
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Result Info */}
@@ -1468,12 +1516,12 @@ const PaymentRequest = () => {
                           )}
                           <td className="py-4 px-6">
                             <div className="flex items-center space-x-2">
-                              <button
-                                onClick={() => handleDetail(request)}
+                              <Link
+                                to={`/payment-request/${request.id}`}
                                 className="text-sm font-bold text-primary-600 hover:text-primary-800 hover:underline cursor-pointer"
                               >
                                 {request.nomorPr}
-                              </button>
+                              </Link>
                               {request.isConfidential && (
                                 <span className="px-1.5 py-0.5 text-[10px] font-bold bg-gray-800 text-white rounded inline-flex items-center" title="Confidential">
                                   <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" /></svg>

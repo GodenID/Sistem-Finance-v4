@@ -1,11 +1,11 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { ArrowLeft, Plus, Search, Filter, Eye, X, ChevronLeft, ChevronRight, CheckCircle, XCircle, Clock, FileText, Paperclip, Trash2, PlusCircle, Banknote, Wallet, Download, Edit2, Upload, Loader2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { useNotification } from '../context/NotificationContext';
 
-import { createRecord, updateRecord, deleteRecord, uploadFile, countRecords, getLightweightRows } from '../lib/api';
+import { createRecord, updateRecord, deleteRecord, uploadFile, countRecords, getLightweightRows, getKasbonByNomor } from '../lib/api';
 import { usePaginatedTable } from '../hooks/usePaginatedTable';
 import { logActivity } from '../lib/auditLog';
 import { deleteFilesOfRecords, deleteR2Files, uploadThenSave } from '../utils/fileCleanup';
@@ -42,6 +42,8 @@ const Penyelesaian = () => {
     onConfirm: () => { }
   });
   const [filterStatus, setFilterStatus] = useState('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const ITEMS_PER_PAGE = 10;
   const [showModal, setShowModal] = useState(false);
 
@@ -177,10 +179,13 @@ const Penyelesaian = () => {
   }), []);
 
   const serverFilters = useMemo(() => {
-    if (filterStatus === 'belum-selesai') return { status_penyelesaian: 'Belum Selesai' };
-    if (filterStatus === 'selesai') return { status_penyelesaian: 'Selesai' };
-    return {};
-  }, [filterStatus]);
+    const f = {};
+    if (filterStatus === 'belum-selesai') f.status_penyelesaian = 'Belum Selesai';
+    if (filterStatus === 'selesai') f.status_penyelesaian = 'Selesai';
+    if (dateFrom) f.start_date = dateFrom;
+    if (dateTo) f.end_date = dateTo;
+    return f;
+  }, [filterStatus, dateFrom, dateTo]);
 
   const {
     items: penyelesaianRequests,
@@ -201,12 +206,12 @@ const Penyelesaian = () => {
     transform: transformPenyelesaianRow,
   });
 
-  // Terapkan filter status UI ke query server (reset ke halaman 1)
+  // Terapkan filter status + tanggal UI ke query server (reset ke halaman 1)
   useEffect(() => {
     setServerFilters(serverFilters);
     setCurrentPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterStatus]);
+  }, [filterStatus, dateFrom, dateTo]);
 
   // Statistik kartu via HEAD count (4 request ringan, tanpa download row).
   const [penyelesaianStats, setPenyelesaianStats] = useState({ total: 0, belumSelesai: 0, selesai: 0, approved: 0 });
@@ -789,6 +794,28 @@ const Penyelesaian = () => {
     navigate(`/penyelesaian/${penyelesaian.id}`);
   };
 
+  // Navigasi ke detail kasbon dari nomor kasbon (klik di tabel / detail).
+  // Cek dulu lookup lokal, fallback query Supabase by nomor_kasbon.
+  const handleKasbonDetail = async (nomorKasbon) => {
+    if (!nomorKasbon) return;
+    const local = kasbonList.find(k => k.nomorKasbon === nomorKasbon);
+    if (local) {
+      navigate(`/kasbon/${local.id}`);
+      return;
+    }
+    try {
+      const kasbon = await getKasbonByNomor(nomorKasbon);
+      if (kasbon?.id) {
+        navigate(`/kasbon/${kasbon.id}`);
+      } else {
+        showToast(`Detail kasbon "${nomorKasbon}" tidak ditemukan`, 'error');
+      }
+    } catch (e) {
+      console.error('Error navigating to kasbon detail:', e);
+      showToast('Gagal membuka detail kasbon', 'error');
+    }
+  };
+
   // Handle Approve Penyelesaian
   const handleApprove = (penyelesaian) => {
     setConfirmDialog({
@@ -1108,17 +1135,60 @@ const Penyelesaian = () => {
               Selesai ({penyelesaianStats.selesai})
             </button>
 
-            {(filterStatus !== 'all' || searchTerm) && (
+            {(filterStatus !== 'all' || searchTerm || dateFrom || dateTo) && (
               <button
                 onClick={() => {
                   setFilterStatus('all');
                   setSearchTerm('');
+                  setDateFrom('');
+                  setDateTo('');
                 }}
                 className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-300 transition-colors"
               >
                 Clear All
               </button>
             )}
+          </div>
+
+          {/* Filter Tanggal */}
+          <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+            <div className="flex items-center space-x-2">
+              <Filter className="w-4 h-4 text-gray-600" />
+              <span className="text-sm font-semibold text-gray-700">Filter Tanggal:</span>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-3 flex-1">
+              <div className="flex-1">
+                <label className="block text-xs font-medium text-gray-500 mb-1">Dari tanggal</label>
+                <input
+                  type="date"
+                  value={dateFrom}
+                  max={dateTo || undefined}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                />
+              </div>
+              <div className="flex-1">
+                <label className="block text-xs font-medium text-gray-500 mb-1">Sampai tanggal</label>
+                <input
+                  type="date"
+                  value={dateTo}
+                  min={dateFrom || undefined}
+                  onChange={(e) => setDateTo(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                />
+              </div>
+              {(dateFrom || dateTo) && (
+                <button
+                  onClick={() => {
+                    setDateFrom('');
+                    setDateTo('');
+                  }}
+                  className="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors self-end"
+                >
+                  Reset Tanggal
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Result Info */}
@@ -1168,8 +1238,8 @@ const Penyelesaian = () => {
                       return (
                       <tr key={penyelesaian.nomorPenyelesaian} className={`hover:bg-gray-50 transition-colors ${isHidden ? 'bg-gray-50' : ''}`}>
                         <td className="py-4 px-6">
-                          <button
-                            onClick={() => handleDetail(penyelesaian)}
+                          <Link
+                            to={`/penyelesaian/${penyelesaian.id}`}
                             className="text-sm font-bold text-amber-600 hover:text-amber-800 hover:underline cursor-pointer"
                           >
                             {penyelesaian.isConfidential && (
@@ -1178,10 +1248,31 @@ const Penyelesaian = () => {
                               </span>
                             )}
                             {penyelesaian.nomorPenyelesaian}
-                          </button>
+                          </Link>
                         </td>
                         <td className="py-4 px-6">
-                          <span className="text-sm font-medium text-emerald-600">{isHidden ? '***' : penyelesaian.nomorKasbon}</span>
+                          {isHidden || !penyelesaian.nomorKasbon ? (
+                            <span className="text-sm font-medium text-emerald-600">{isHidden ? '***' : '-'}</span>
+                          ) : (() => {
+                            const kasbonId = kasbonList.find(k => k.nomorKasbon === penyelesaian.nomorKasbon)?.id;
+                            return kasbonId ? (
+                              <Link
+                                to={`/kasbon/${kasbonId}`}
+                                className="text-sm font-medium text-emerald-600 hover:text-emerald-800 hover:underline cursor-pointer"
+                                title={`Lihat detail kasbon ${penyelesaian.nomorKasbon}`}
+                              >
+                                {penyelesaian.nomorKasbon}
+                              </Link>
+                            ) : (
+                              <button
+                                onClick={() => handleKasbonDetail(penyelesaian.nomorKasbon)}
+                                className="text-sm font-medium text-emerald-600 hover:text-emerald-800 hover:underline cursor-pointer"
+                                title={`Lihat detail kasbon ${penyelesaian.nomorKasbon}`}
+                              >
+                                {penyelesaian.nomorKasbon}
+                              </button>
+                            );
+                          })()}
                         </td>
                         <td className="py-4 px-6">
                           <span className="text-sm text-gray-600">{penyelesaian.tanggal}</span>

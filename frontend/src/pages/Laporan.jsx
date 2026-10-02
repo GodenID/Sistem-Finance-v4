@@ -670,6 +670,18 @@ const Laporan = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const categoryData = useMemo(() => getDataByCategory(), [filteredData, selectedReport]);
 
+  // Nama vendor / tujuan pembayaran untuk tabel gabungan.
+  // Payment Request -> nama vendor (atau info VA); Kasbon/Klaim -> '-'.
+  const getGabunganVendor = (item) => {
+    if (!item || item.modul !== 'Payment Request') return '-';
+    if (item.metode_pembayaran === 'Virtual Account') {
+      return `VA: ${item.virtual_account_name || '-'} (${item.virtual_account_number || '-'})`;
+    }
+    if (!item.vendor_id) return '-';
+    const vendor = (reportData.vendors || []).find(v => v.id === item.vendor_id);
+    return vendor ? vendor.nama : '-';
+  };
+
   // Gabungkan data dari semua modul berdasarkan nomor QL dan tipe
   const getCombinedDataByQL = () => {
     const combined = [];
@@ -681,19 +693,28 @@ const Laporan = () => {
       ...filteredData.klaim.map(item => ({ ...item, modul: 'Klaim', nomorRef: item.nomor_klaim }))
     ];
 
-    // Group by nomor_ql dan tipe
+    // Group by nomor_ql (case-insensitive) dan tipe.
+    // "PSQL-0100", "psql-0100", "Psql-0100 " digabung jadi satu grup
+    // dengan total nominal dijumlahkan, tampil selalu huruf besar agar sama.
     const grouped = allData.reduce((acc, item) => {
-      const key = `${item.nomor_ql || 'Tanpa QL'}_${item.tipe || 'Lainnya'}`;
+      const qlRaw = (item.nomor_ql || '').trim();
+      const qlKey = qlRaw ? qlRaw.toUpperCase() : 'TANPA QL';
+      const key = `${qlKey}_${item.tipe || 'Lainnya'}`;
       if (!acc[key]) {
         acc[key] = {
-          nomor_ql: item.nomor_ql || '-',
+          nomor_ql: qlKey === 'TANPA QL' ? '-' : qlKey,
           tipe: item.tipe || 'Lainnya',
           items: [],
+          vendors: [],
           totalNominal: 0,
           count: 0
         };
       }
       acc[key].items.push(item);
+      const vendorName = getGabunganVendor(item);
+      if (vendorName !== '-' && !acc[key].vendors.includes(vendorName)) {
+        acc[key].vendors.push(vendorName);
+      }
       acc[key].totalNominal += parseFloat(item.nominal) || 0;
       acc[key].count++;
       return acc;
@@ -1169,6 +1190,192 @@ const Laporan = () => {
         </div>
       </div>
 
+
+      {/* Detail Transaksi Gabungan - di bawah filter, di atas grafik */}
+      {selectedReport !== 'transaksi-berulang' && (
+        /* Detail Table - Regular Transactions */
+        <div className="card">
+          <div className="p-4 sm:p-6">
+            <div className="flex items-center justify-between mb-4 sm:mb-6">
+              <div className="flex items-center space-x-2 sm:space-x-3">
+                <div className="w-8 h-8 sm:w-10 sm:h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                  <FileText className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-bold text-gray-800">Detail Transaksi Gabungan</h3>
+                  <p className="text-xs sm:text-sm text-gray-600">Data gabungan dari Payment Request, Kasbon, dan Klaim berdasarkan Nomor QL dan Tipe</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto -mx-4 sm:mx-0">
+              <div className="inline-block min-w-full align-middle">
+                <div className="overflow-hidden">
+                  <table className="w-full">
+                    <thead className="bg-gray-50 border-b border-gray-200">
+                      <tr>
+                        <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase">Nomor QL</th>
+                        <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase">Tipe</th>
+                        <th className="text-center py-3 px-4 text-xs font-semibold text-gray-600 uppercase">Jumlah Transaksi</th>
+                        <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase">Detail Modul</th>
+                        <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase">Vendor</th>
+                        <th className="text-right py-3 px-4 text-xs font-semibold text-gray-600 uppercase">Total Nominal</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {isLoading ? (
+                        <tr>
+                          <td colSpan="6" className="py-8 text-center">
+                            <div className="flex items-center justify-center space-x-2">
+                              <div className="w-5 h-5 border-2 border-primary-600 border-t-transparent rounded-full animate-spin"></div>
+                              <span className="text-sm text-gray-600">Memuat data...</span>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : combinedData.length === 0 ? (
+                        <tr>
+                          <td colSpan="6" className="py-8 text-center text-sm text-gray-500">
+                            Tidak ada data untuk ditampilkan
+                          </td>
+                        </tr>
+                      ) : (
+                        combinedData.map((group, groupIndex) => (
+                          <React.Fragment key={groupIndex}>
+                            {/* Main Row */}
+                            <tr className="hover:bg-gray-50 cursor-pointer" onClick={() => setExpandedRows(prev => ({ ...prev, [groupIndex]: !prev[groupIndex] }))}>
+                              <td className="py-3 px-4">
+                                <div className="flex items-center space-x-2">
+                                  {expandedRows[groupIndex] ? (
+                                    <ChevronUp className="w-4 h-4 text-gray-400" />
+                                  ) : (
+                                    <ChevronDown className="w-4 h-4 text-gray-400" />
+                                  )}
+                                  <span className="text-xs sm:text-sm font-medium text-gray-800">{group.nomor_ql}</span>
+                                </div>
+                              </td>
+                              <td className="py-3 px-4">
+                                <span className="text-xs sm:text-sm font-semibold text-primary-600">{group.tipe}</span>
+                              </td>
+                              <td className="text-center py-3 px-4">
+                                <span className="text-xs sm:text-sm font-semibold text-gray-700">{group.count}</span>
+                              </td>
+                              <td className="py-3 px-4">
+                                <div className="flex flex-wrap gap-1">
+                                  {group.items.map((item, idx) => (
+                                    <span
+                                      key={idx}
+                                      className={`px-2 py-1 rounded text-xs font-medium ${item.modul === 'Payment Request' ? 'bg-blue-100 text-blue-700' :
+                                        item.modul === 'Kasbon' ? 'bg-emerald-100 text-emerald-700' :
+                                          'bg-violet-100 text-violet-700'
+                                        }`}
+                                    >
+                                      {item.modul}
+                                    </span>
+                                  ))}
+                                </div>
+                              </td>
+                              <td className="py-3 px-4">
+                                <span
+                                  className="text-xs sm:text-sm text-gray-700 break-words"
+                                  title={group.vendors.length > 0 ? group.vendors.join(', ') : '-'}
+                                >
+                                  {group.vendors.length > 0 ? group.vendors.join(', ') : '-'}
+                                </span>
+                              </td>
+                              <td className="text-right py-3 px-4">
+                                <span className="text-xs sm:text-sm font-semibold text-gray-800 break-words">
+                                  Rp {formatRupiah(group.totalNominal)}
+                                </span>
+                              </td>
+                            </tr>
+
+                            {/* Expanded Detail Rows */}
+                            {expandedRows[groupIndex] && (
+                              <tr>
+                                <td colSpan="6" className="bg-gray-50 p-0">
+                                  <div className="p-4">
+                                    <div className="space-y-3">
+                                      {group.items.map((item, itemIdx) => (
+                                        <div key={itemIdx} className="bg-white rounded-lg border border-gray-200 p-4">
+                                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                                            <div>
+                                              <p className="text-xs text-gray-500 mb-1">Nomor Referensi</p>
+                                              <p className="text-sm font-semibold text-gray-800">{item.nomorRef}</p>
+                                            </div>
+                                            <div>
+                                              <p className="text-xs text-gray-500 mb-1">Modul</p>
+                                              <span className={`inline-block px-2 py-1 rounded text-xs font-medium ${item.modul === 'Payment Request' ? 'bg-blue-100 text-blue-700' :
+                                                item.modul === 'Kasbon' ? 'bg-emerald-100 text-emerald-700' :
+                                                  'bg-violet-100 text-violet-700'
+                                                }`}>
+                                                {item.modul}
+                                              </span>
+                                            </div>
+                                            <div>
+                                              <p className="text-xs text-gray-500 mb-1">Nama Karyawan</p>
+                                              <p className="text-sm font-medium text-gray-800">{item.nama_karyawan || '-'}</p>
+                                            </div>
+                                            <div>
+                                              <p className="text-xs text-gray-500 mb-1">Nama Vendor</p>
+                                              <p className="text-sm font-medium text-gray-800">{getGabunganVendor(item)}</p>
+                                            </div>
+                                            <div>
+                                              <p className="text-xs text-gray-500 mb-1">Nominal</p>
+                                              <p className="text-sm font-semibold text-primary-600">Rp {formatRupiah(item.nominal)}</p>
+                                            </div>
+                                            <div>
+                                              <p className="text-xs text-gray-500 mb-1">Tanggal</p>
+                                              <p className="text-sm text-gray-700">
+                                                {item.created_at ? new Date(item.created_at).toLocaleDateString('id-ID') : '-'}
+                                              </p>
+                                            </div>
+                                            <div>
+                                              <p className="text-xs text-gray-500 mb-1">Status Approval</p>
+                                              <span className={`inline-block px-2 py-1 rounded text-xs font-medium ${item.status_approval === 'Approved' ? 'bg-green-100 text-green-700' :
+                                                item.status_approval === 'Rejected' ? 'bg-red-100 text-red-700' :
+                                                  'bg-yellow-100 text-yellow-700'
+                                                }`}>
+                                                {item.status_approval || 'Pending'}
+                                              </span>
+                                            </div>
+                                            <div>
+                                              <p className="text-xs text-gray-500 mb-1">Status Transfer</p>
+                                              <span className={`inline-block px-2 py-1 rounded text-xs font-medium ${item.status_transfer === 'Sudah Transfer' ? 'bg-blue-100 text-blue-700' :
+                                                'bg-gray-100 text-gray-700'
+                                                }`}>
+                                                {item.status_transfer || 'Belum Transfer'}
+                                              </span>
+                                            </div>
+                                            <div>
+                                              <p className="text-xs text-gray-500 mb-1">ID Perusahaan</p>
+                                              <p className="text-sm text-gray-700">{item.id_perusahaan || '-'}</p>
+                                            </div>
+                                            {item.keterangan && (
+                                              <div className="col-span-full">
+                                                <p className="text-xs text-gray-500 mb-1">Keterangan</p>
+                                                <p className="text-sm text-gray-700">{item.keterangan}</p>
+                                              </div>
+                                            )}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Summary Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         {/* Total Transaksi */}
@@ -1367,7 +1574,7 @@ const Laporan = () => {
       </div>
 
       {/* Detail Table - Recurring Transactions */}
-      {selectedReport === 'transaksi-berulang' ? (
+      {selectedReport === 'transaksi-berulang' && (
         <div className="card">
           <div className="p-4 sm:p-6">
             <div className="flex items-center justify-between mb-4 sm:mb-6">
@@ -1540,175 +1747,6 @@ const Laporan = () => {
                             </tr>
                           );
                         })
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : (
-        /* Detail Table - Regular Transactions */
-        <div className="card">
-          <div className="p-4 sm:p-6">
-            <div className="flex items-center justify-between mb-4 sm:mb-6">
-              <div className="flex items-center space-x-2 sm:space-x-3">
-                <div className="w-8 h-8 sm:w-10 sm:h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-                  <FileText className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600" />
-                </div>
-                <div>
-                  <h3 className="text-sm sm:text-base font-bold text-gray-800">Detail Transaksi Gabungan</h3>
-                  <p className="text-xs sm:text-sm text-gray-600">Data gabungan dari Payment Request, Kasbon, dan Klaim berdasarkan Nomor QL dan Tipe</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="overflow-x-auto -mx-4 sm:mx-0">
-              <div className="inline-block min-w-full align-middle">
-                <div className="overflow-hidden">
-                  <table className="w-full">
-                    <thead className="bg-gray-50 border-b border-gray-200">
-                      <tr>
-                        <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase">Nomor QL</th>
-                        <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase">Tipe</th>
-                        <th className="text-center py-3 px-4 text-xs font-semibold text-gray-600 uppercase">Jumlah Transaksi</th>
-                        <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase">Detail Modul</th>
-                        <th className="text-right py-3 px-4 text-xs font-semibold text-gray-600 uppercase">Total Nominal</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {isLoading ? (
-                        <tr>
-                          <td colSpan="5" className="py-8 text-center">
-                            <div className="flex items-center justify-center space-x-2">
-                              <div className="w-5 h-5 border-2 border-primary-600 border-t-transparent rounded-full animate-spin"></div>
-                              <span className="text-sm text-gray-600">Memuat data...</span>
-                            </div>
-                          </td>
-                        </tr>
-                      ) : combinedData.length === 0 ? (
-                        <tr>
-                          <td colSpan="5" className="py-8 text-center text-sm text-gray-500">
-                            Tidak ada data untuk ditampilkan
-                          </td>
-                        </tr>
-                      ) : (
-                        combinedData.map((group, groupIndex) => (
-                          <React.Fragment key={groupIndex}>
-                            {/* Main Row */}
-                            <tr className="hover:bg-gray-50 cursor-pointer" onClick={() => setExpandedRows(prev => ({ ...prev, [groupIndex]: !prev[groupIndex] }))}>
-                              <td className="py-3 px-4">
-                                <div className="flex items-center space-x-2">
-                                  {expandedRows[groupIndex] ? (
-                                    <ChevronUp className="w-4 h-4 text-gray-400" />
-                                  ) : (
-                                    <ChevronDown className="w-4 h-4 text-gray-400" />
-                                  )}
-                                  <span className="text-xs sm:text-sm font-medium text-gray-800">{group.nomor_ql}</span>
-                                </div>
-                              </td>
-                              <td className="py-3 px-4">
-                                <span className="text-xs sm:text-sm font-semibold text-primary-600">{group.tipe}</span>
-                              </td>
-                              <td className="text-center py-3 px-4">
-                                <span className="text-xs sm:text-sm font-semibold text-gray-700">{group.count}</span>
-                              </td>
-                              <td className="py-3 px-4">
-                                <div className="flex flex-wrap gap-1">
-                                  {group.items.map((item, idx) => (
-                                    <span
-                                      key={idx}
-                                      className={`px-2 py-1 rounded text-xs font-medium ${item.modul === 'Payment Request' ? 'bg-blue-100 text-blue-700' :
-                                        item.modul === 'Kasbon' ? 'bg-emerald-100 text-emerald-700' :
-                                          'bg-violet-100 text-violet-700'
-                                        }`}
-                                    >
-                                      {item.modul}
-                                    </span>
-                                  ))}
-                                </div>
-                              </td>
-                              <td className="text-right py-3 px-4">
-                                <span className="text-xs sm:text-sm font-semibold text-gray-800 break-words">
-                                  Rp {formatRupiah(group.totalNominal)}
-                                </span>
-                              </td>
-                            </tr>
-
-                            {/* Expanded Detail Rows */}
-                            {expandedRows[groupIndex] && (
-                              <tr>
-                                <td colSpan="5" className="bg-gray-50 p-0">
-                                  <div className="p-4">
-                                    <div className="space-y-3">
-                                      {group.items.map((item, itemIdx) => (
-                                        <div key={itemIdx} className="bg-white rounded-lg border border-gray-200 p-4">
-                                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                                            <div>
-                                              <p className="text-xs text-gray-500 mb-1">Nomor Referensi</p>
-                                              <p className="text-sm font-semibold text-gray-800">{item.nomorRef}</p>
-                                            </div>
-                                            <div>
-                                              <p className="text-xs text-gray-500 mb-1">Modul</p>
-                                              <span className={`inline-block px-2 py-1 rounded text-xs font-medium ${item.modul === 'Payment Request' ? 'bg-blue-100 text-blue-700' :
-                                                item.modul === 'Kasbon' ? 'bg-emerald-100 text-emerald-700' :
-                                                  'bg-violet-100 text-violet-700'
-                                                }`}>
-                                                {item.modul}
-                                              </span>
-                                            </div>
-                                            <div>
-                                              <p className="text-xs text-gray-500 mb-1">Nama Karyawan</p>
-                                              <p className="text-sm font-medium text-gray-800">{item.nama_karyawan || '-'}</p>
-                                            </div>
-                                            <div>
-                                              <p className="text-xs text-gray-500 mb-1">Nominal</p>
-                                              <p className="text-sm font-semibold text-primary-600">Rp {formatRupiah(item.nominal)}</p>
-                                            </div>
-                                            <div>
-                                              <p className="text-xs text-gray-500 mb-1">Tanggal</p>
-                                              <p className="text-sm text-gray-700">
-                                                {item.created_at ? new Date(item.created_at).toLocaleDateString('id-ID') : '-'}
-                                              </p>
-                                            </div>
-                                            <div>
-                                              <p className="text-xs text-gray-500 mb-1">Status Approval</p>
-                                              <span className={`inline-block px-2 py-1 rounded text-xs font-medium ${item.status_approval === 'Approved' ? 'bg-green-100 text-green-700' :
-                                                item.status_approval === 'Rejected' ? 'bg-red-100 text-red-700' :
-                                                  'bg-yellow-100 text-yellow-700'
-                                                }`}>
-                                                {item.status_approval || 'Pending'}
-                                              </span>
-                                            </div>
-                                            <div>
-                                              <p className="text-xs text-gray-500 mb-1">Status Transfer</p>
-                                              <span className={`inline-block px-2 py-1 rounded text-xs font-medium ${item.status_transfer === 'Sudah Transfer' ? 'bg-blue-100 text-blue-700' :
-                                                'bg-gray-100 text-gray-700'
-                                                }`}>
-                                                {item.status_transfer || 'Belum Transfer'}
-                                              </span>
-                                            </div>
-                                            <div>
-                                              <p className="text-xs text-gray-500 mb-1">ID Perusahaan</p>
-                                              <p className="text-sm text-gray-700">{item.id_perusahaan || '-'}</p>
-                                            </div>
-                                            {item.keterangan && (
-                                              <div className="col-span-full">
-                                                <p className="text-xs text-gray-500 mb-1">Keterangan</p>
-                                                <p className="text-sm text-gray-700">{item.keterangan}</p>
-                                              </div>
-                                            )}
-                                          </div>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </div>
-                                </td>
-                              </tr>
-                            )}
-                          </React.Fragment>
-                        ))
                       )}
                     </tbody>
                   </table>

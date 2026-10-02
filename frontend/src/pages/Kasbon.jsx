@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { ArrowLeft, Plus, Search, Filter, Download, Eye, X, ChevronLeft, ChevronRight, Banknote, Wallet, FileText, CheckCircle, XCircle, Upload, Trash2, Edit2, Paperclip } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
@@ -39,6 +39,8 @@ const Kasbon = () => {
     return record.statusTransfer === 'Sudah Transfer';
   };
   const [filterStatus, setFilterStatusState] = useState('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const ITEMS_PER_PAGE = 10;
   const [showModal, setShowModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
@@ -112,12 +114,15 @@ const Kasbon = () => {
   }), []);
 
   const serverFilters = useMemo(() => {
-    if (filterStatus === 'belum-transfer') return { status_transfer: 'Belum Transfer' };
-    if (filterStatus === 'sudah-transfer') return { status_transfer: 'Sudah Transfer' };
-    if (filterStatus === 'belum-penyelesaian') return { status_penyelesaian: 'Belum Diselesaikan' };
-    if (filterStatus === 'sudah-penyelesaian') return { status_penyelesaian: 'Sudah Diselesaikan' };
-    return {};
-  }, [filterStatus]);
+    const f = {};
+    if (filterStatus === 'belum-transfer') f.status_transfer = 'Belum Transfer';
+    if (filterStatus === 'sudah-transfer') f.status_transfer = 'Sudah Transfer';
+    if (filterStatus === 'belum-penyelesaian') f.status_penyelesaian = 'Belum Diselesaikan';
+    if (filterStatus === 'sudah-penyelesaian') f.status_penyelesaian = 'Sudah Diselesaikan';
+    if (dateFrom) f.start_date = dateFrom;
+    if (dateTo) f.end_date = dateTo;
+    return f;
+  }, [filterStatus, dateFrom, dateTo]);
 
   const {
     items: kasbonRequests,
@@ -138,12 +143,12 @@ const Kasbon = () => {
     transform: transformKasbonRow,
   });
 
-  // Terapkan filter status UI ke query server (reset ke halaman 1)
+  // Terapkan filter status + tanggal UI ke query server (reset ke halaman 1)
   useEffect(() => {
     setServerFilters(serverFilters);
     setCurrentPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterStatus]);
+  }, [filterStatus, dateFrom, dateTo]);
 
   // Statistik kartu via HEAD count (4 request ringan, tanpa download row) — FIX #1.
   const [kasbonStats, setKasbonStats] = useState({ total: 0, belum: 0, sudah: 0, approved: 0, belumPenyelesaian: 0, sudahPenyelesaian: 0 });
@@ -868,17 +873,60 @@ const Kasbon = () => {
               </button>
             </div>
 
-            {(filterStatus !== 'all' || searchTerm) && (
+            {(filterStatus !== 'all' || searchTerm || dateFrom || dateTo) && (
               <button
                 onClick={() => {
                   setFilterStatusState('all');
                   setSearchTerm('');
+                  setDateFrom('');
+                  setDateTo('');
                 }}
                 className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-300 transition-colors"
               >
                 Clear All
               </button>
             )}
+          </div>
+
+          {/* Filter Tanggal */}
+          <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+            <div className="flex items-center space-x-2">
+              <Filter className="w-4 h-4 text-gray-600" />
+              <span className="text-sm font-semibold text-gray-700">Filter Tanggal:</span>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-3 flex-1">
+              <div className="flex-1">
+                <label className="block text-xs font-medium text-gray-500 mb-1">Dari tanggal</label>
+                <input
+                  type="date"
+                  value={dateFrom}
+                  max={dateTo || undefined}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                />
+              </div>
+              <div className="flex-1">
+                <label className="block text-xs font-medium text-gray-500 mb-1">Sampai tanggal</label>
+                <input
+                  type="date"
+                  value={dateTo}
+                  min={dateFrom || undefined}
+                  onChange={(e) => setDateTo(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                />
+              </div>
+              {(dateFrom || dateTo) && (
+                <button
+                  onClick={() => {
+                    setDateFrom('');
+                    setDateTo('');
+                  }}
+                  className="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors self-end"
+                >
+                  Reset Tanggal
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Result Info */}
@@ -968,8 +1016,8 @@ const Kasbon = () => {
                           </td>
                         )}
                         <td className="py-4 px-6">
-                          <button
-                            onClick={() => handleDetail(kasbon)}
+                          <Link
+                            to={`/kasbon/${kasbon.id}`}
                             className="text-sm font-bold text-emerald-600 hover:text-emerald-800 hover:underline cursor-pointer"
                           >
                             {kasbon.isConfidential && (
@@ -978,7 +1026,7 @@ const Kasbon = () => {
                               </span>
                             )}
                             {kasbon.nomorKasbon}
-                          </button>
+                          </Link>
                         </td>
                         <td className="py-4 px-6">
                           <QLLink ql={kasbon.nomorQl} hidden={isHidden} className="text-sm text-gray-700" linkClassName="text-emerald-600 font-medium" />

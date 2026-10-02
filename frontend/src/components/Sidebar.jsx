@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
   CreditCard,
@@ -26,7 +26,6 @@ import { useAuth } from '../context/AuthContext';
 import { useAppVersion } from '../lib/version';
 
 const Sidebar = ({ isOpen, setIsOpen }) => {
-  const navigate = useNavigate();
   const location = useLocation();
   const { userRole, hasPermission } = useAuth();
   const appVersion = useAppVersion();
@@ -102,8 +101,7 @@ const Sidebar = ({ isOpen, setIsOpen }) => {
   // Tambahkan menu Changelog untuk semua user
   menuItems.push({ icon: BookOpen, label: 'Changelog', path: '/changelog' });
 
-  const handleNavigate = (path) => {
-    navigate(path);
+  const handleNavClick = () => {
     // Auto close sidebar on mobile after navigation
     if (window.innerWidth < 1024) {
       setIsOpen(false);
@@ -177,8 +175,9 @@ const Sidebar = ({ isOpen, setIsOpen }) => {
               const isActive = location.pathname === item.path;
               return (
                 <li key={index}>
-                  <button
-                    onClick={() => handleNavigate(item.path)}
+                  <Link
+                    to={item.path}
+                    onClick={handleNavClick}
                     className={`
                       w-full flex items-center rounded-lg
                       transition-all duration-200
@@ -194,7 +193,7 @@ const Sidebar = ({ isOpen, setIsOpen }) => {
                     <span className={`whitespace-nowrap overflow-hidden text-ellipsis ${isOpen ? 'block' : 'lg:hidden'}`}>
                       {item.label}
                     </span>
-                  </button>
+                  </Link>
                 </li>
               );
             })}
@@ -230,8 +229,9 @@ const Sidebar = ({ isOpen, setIsOpen }) => {
                     const isSubActive = location.pathname === subItem.path;
                     return (
                       <li key={subIndex}>
-                        <button
-                          onClick={() => handleNavigate(subItem.path)}
+                        <Link
+                          to={subItem.path}
+                          onClick={handleNavClick}
                           className={`
                             w-full flex items-center rounded-lg px-3 py-2 space-x-2
                             transition-all duration-200 text-sm
@@ -243,7 +243,7 @@ const Sidebar = ({ isOpen, setIsOpen }) => {
                         >
                           <subItem.icon className={`w-4 h-4 flex-shrink-0 ${isSubActive ? 'text-violet-600' : ''}`} />
                           <span className="whitespace-nowrap">{subItem.label}</span>
-                        </button>
+                        </Link>
                       </li>
                     );
                   })}

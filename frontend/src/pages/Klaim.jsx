@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { ArrowLeft, Plus, Search, Filter, Eye, X, ChevronLeft, ChevronRight, Banknote, Wallet, FileText, Paperclip, Download, CheckCircle, XCircle, Upload, Edit2, Trash2, PlusCircle, MinusCircle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
@@ -43,6 +43,8 @@ const Klaim = () => {
   };
   const canViewConfidential = hasPermission ? hasPermission('view_confidential') : ['administrator', 'bod', 'team_finance', 'hrd'].includes(userRole?.toLowerCase());
   const [filterStatus, setFilterStatus] = useState('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const ITEMS_PER_PAGE = 10;
   const [showModal, setShowModal] = useState(false);
 
@@ -187,10 +189,13 @@ const Klaim = () => {
   }, []);
 
   const serverFilters = useMemo(() => {
-    if (filterStatus === 'belum-transfer') return { status_transfer: 'Belum Transfer' };
-    if (filterStatus === 'sudah-transfer') return { status_transfer: 'Sudah Transfer' };
-    return {};
-  }, [filterStatus]);
+    const f = {};
+    if (filterStatus === 'belum-transfer') f.status_transfer = 'Belum Transfer';
+    if (filterStatus === 'sudah-transfer') f.status_transfer = 'Sudah Transfer';
+    if (dateFrom) f.start_date = dateFrom;
+    if (dateTo) f.end_date = dateTo;
+    return f;
+  }, [filterStatus, dateFrom, dateTo]);
 
   const {
     items: klaimRequests,
@@ -211,12 +216,12 @@ const Klaim = () => {
     transform: transformKlaimRow,
   });
 
-  // Terapkan filter status UI ke query server (reset ke halaman 1)
+  // Terapkan filter status + tanggal UI ke query server (reset ke halaman 1)
   useEffect(() => {
     setServerFilters(serverFilters);
     setCurrentPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterStatus]);
+  }, [filterStatus, dateFrom, dateTo]);
 
   // Statistik kartu via HEAD count (4 request ringan, tanpa download row).
   const [klaimStats, setKlaimStats] = useState({ total: 0, belum: 0, sudah: 0, approved: 0 });
@@ -1116,17 +1121,60 @@ const Klaim = () => {
               </button>
             </div>
 
-            {(filterStatus !== 'all' || searchTerm) && (
+            {(filterStatus !== 'all' || searchTerm || dateFrom || dateTo) && (
               <button
                 onClick={() => {
                   setFilterStatus('all');
                   setSearchTerm('');
+                  setDateFrom('');
+                  setDateTo('');
                 }}
                 className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-300 transition-colors"
               >
                 Clear All
               </button>
             )}
+          </div>
+
+          {/* Filter Tanggal */}
+          <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+            <div className="flex items-center space-x-2">
+              <Filter className="w-4 h-4 text-gray-600" />
+              <span className="text-sm font-semibold text-gray-700">Filter Tanggal:</span>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-3 flex-1">
+              <div className="flex-1">
+                <label className="block text-xs font-medium text-gray-500 mb-1">Dari tanggal</label>
+                <input
+                  type="date"
+                  value={dateFrom}
+                  max={dateTo || undefined}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                />
+              </div>
+              <div className="flex-1">
+                <label className="block text-xs font-medium text-gray-500 mb-1">Sampai tanggal</label>
+                <input
+                  type="date"
+                  value={dateTo}
+                  min={dateFrom || undefined}
+                  onChange={(e) => setDateTo(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                />
+              </div>
+              {(dateFrom || dateTo) && (
+                <button
+                  onClick={() => {
+                    setDateFrom('');
+                    setDateTo('');
+                  }}
+                  className="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors self-end"
+                >
+                  Reset Tanggal
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Result Info */}
@@ -1219,12 +1267,12 @@ const Klaim = () => {
                           )}
                           <td className="py-4 px-6">
                             <div className="flex items-center space-x-2">
-                              <button
-                                onClick={() => handleDetail(klaim)}
+                              <Link
+                                to={`/klaim/${klaim.id}`}
                                 className="text-sm font-bold text-violet-600 hover:text-violet-800 hover:underline cursor-pointer"
                               >
                                 {klaim.nomorKlaim}
-                              </button>
+                              </Link>
                               {klaim.isConfidential && (
                                 <span className="px-1.5 py-0.5 text-[10px] font-bold bg-gray-800 text-white rounded">
                                   🔒
