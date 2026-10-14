@@ -21,6 +21,7 @@ import jsPDF from 'jspdf';
 import { useRealtimeSubscription } from '../hooks/useRealtimeSubscription';
 import { generatePRNumber } from '../utils/generateUniqueNumber';
 import { sendTransferNotification } from '../lib/emailNotifications';
+import { formatTanggalJamPendek, getStatusBadgeClass, calcDurations } from '../lib/approvalFlow';
 
 const PaymentRequest = () => {
   const navigate = useNavigate();
@@ -33,6 +34,8 @@ const PaymentRequest = () => {
   // Permission per-user (default mengikuti role, bisa dioverride Administrator dari halaman Karyawan)
   const canManage = hasPermission ? hasPermission('approve') : ['administrator', 'manager', 'bod'].includes(userRole);
   const isAuthorizedApprover = hasPermission ? hasPermission('approve') : ['administrator', 'manager', 'bod'].includes(userRole?.toLowerCase());
+  const canApproveManager = hasPermission ? (hasPermission('approve_manager') || hasPermission('approve')) : ['administrator', 'manager', 'bod'].includes(userRole?.toLowerCase());
+  const canApproveHead = hasPermission ? (hasPermission('approve_head_finance') || hasPermission('approve')) : ['administrator', 'head_finance'].includes(userRole?.toLowerCase());
   const isGuest = userRole === 'guest';
   const isFinance = hasPermission ? hasPermission('transfer') : userRole === 'team_finance';
   const isAdmin = userRole?.toLowerCase() === 'administrator';
@@ -134,6 +137,7 @@ const PaymentRequest = () => {
       const vendor = getVendorById(pr.vendor_id);
       vendorName = vendor?.nama || '';
     }
+    const sla = calcDurations(pr);
 
     return {
       id: pr.id,
@@ -141,6 +145,7 @@ const PaymentRequest = () => {
       nomorQl: pr.nomor_ql || '',
       namaEvent: pr.nama_event || '',
       tanggal: pr.created_at ? new Date(pr.created_at).toISOString().split('T')[0] : '',
+      tanggalJam: pr.created_at ? formatTanggalJamPendek(pr.created_at) : '-',
       tipe: pr.tipe || '',
       idPerusahaan: pr.id_perusahaan || '',
       metodePembayaran: pr.metode_pembayaran || 'Transfer Rekening',
@@ -151,13 +156,24 @@ const PaymentRequest = () => {
       nominal: parseFloat(pr.nominal) || 0,
       statusApproval: pr.status_approval || 'Pending',
       disetujuiOleh: pr.disetujui_oleh || '-',
+      disetujuiHeadFinance: pr.head_finance_approved_by || '-',
       statusTransfer: pr.status_transfer || 'Belum Transfer',
       keterangan: pr.keterangan || '',
       lampiran: pr.lampiran || null,
       buktiTransfer: pr.bukti_transfer || null,
       namaKaryawan: pr.nama_karyawan || '',
       created_by: pr.created_by || null,
-      isConfidential: pr.is_confidential || false
+      isConfidential: pr.is_confidential || false,
+      manager_approved_at: pr.manager_approved_at || null,
+      manager_approved_by: pr.manager_approved_by || null,
+      head_finance_approved_at: pr.head_finance_approved_at || null,
+      head_finance_approved_by: pr.head_finance_approved_by || null,
+      transferred_at: pr.transferred_at || null,
+      rejected_at: pr.rejected_at || null,
+      rejected_by: pr.rejected_by || null,
+      durasiManager: sla.manager,
+      durasiHeadFinance: sla.headFinance,
+      durasiTransfer: sla.transfer
     };
   }, [getVendorById]);
 
@@ -275,10 +291,11 @@ const PaymentRequest = () => {
   const getStatusApprovalBadge = (status) => {
     const badges = {
       'Pending': 'bg-amber-50 text-amber-700',
+      'Manager Approved': 'bg-blue-50 text-blue-700',
       'Approved': 'bg-emerald-50 text-emerald-700',
       'Rejected': 'bg-rose-50 text-rose-700',
     };
-    return <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold ${badges[status]}`}>{status}</span>;
+    return <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold ${badges[status] || getStatusBadgeClass(status)}`}>{status}</span>;
   };
 
   const getStatusTransferBadge = (status) => {
@@ -350,13 +367,24 @@ const PaymentRequest = () => {
           setFileUploadProgress({ ...newProgress });
         }, 100);
 
-        const result = await uploadFile(file, 'payment-requests', nomorPr, userName);
+        try {
+          const result = await uploadFile(file, 'payment-requests', nomorPr, userName);
 
-        clearInterval(progressInterval);
-        newProgress[file.name] = 100;
-        setFileUploadProgress({ ...newProgress });
+          newProgress[file.name] = 100;
+          setFileUploadProgress({ ...newProgress });
 
-        uploadedUrls.push(result.url);
+          uploadedUrls.push(result.url);
+        } catch (fileError) {
+          // Tandai file yang gagal agar user tahu file mana yang bermasalah,
+          // lalu batalkan dengan pesan yang jelas (tidak ngestuck diam-diam)
+          newProgress[file.name] = 0;
+          setFileUploadProgress({ ...newProgress });
+          throw new Error(`Upload "${file.name}" gagal: ${fileError?.message || 'Silakan coba lagi'}`);
+        } finally {
+          // WAJIB clear — sebelumnya interval bocor saat upload gagal
+          // sehingga progress jalan terus & tombol stuck
+          clearInterval(progressInterval);
+        }
       }
       return uploadedUrls;
     } catch (error) {
@@ -517,8 +545,13 @@ const PaymentRequest = () => {
           keterangan: formData.keterangan || null,
           lampiran: uploadedUrls.length > 0 ? JSON.stringify(uploadedUrls) : null,
           status_transfer: 'Belum Transfer',
+          // BOD: auto lolos Manager + Head Finance sekaligus (langsung Approved final)
           status_approval: isBOD ? 'Approved' : 'Pending',
           disetujui_oleh: isBOD ? userName : null,
+          manager_approved_by: isBOD ? userName : null,
+          manager_approved_at: isBOD ? new Date().toISOString() : null,
+          head_finance_approved_by: isBOD ? userName : null,
+          head_finance_approved_at: isBOD ? new Date().toISOString() : null,
           nama_karyawan: namaKaryawanValue,
           is_confidential: isBOD || isHRD
         };
@@ -720,16 +753,22 @@ const PaymentRequest = () => {
   };
 
   const handleApprove = (pr) => {
+    if (pr.statusApproval !== 'Pending') {
+      showToast('Hanya pengajuan Pending yang bisa disetujui Manager', 'error');
+      return;
+    }
     setConfirmDialog({
       isOpen: true,
       type: 'success',
-      title: 'Konfirmasi Approval',
-      message: `Apakah Anda yakin ingin menyetujui Payment Request "${pr.nomorPr}"? Tindakan ini akan mengubah status menjadi Approved.`,
+      title: 'Konfirmasi Approval Manager',
+      message: `Apakah Anda yakin ingin menyetujui Payment Request "${pr.nomorPr}"? Tindakan ini akan mengubah status menjadi Manager Approved.`,
       onConfirm: async () => {
         try {
           await updateRecord('payment_requests', pr.id, {
-            status_approval: 'Approved',
-            disetujui_oleh: userName || 'Manager'
+            status_approval: 'Manager Approved',
+            disetujui_oleh: userName || 'Manager',
+            manager_approved_by: userName || null,
+            manager_approved_at: new Date().toISOString()
           });
           // Log activity
           await logActivity({
@@ -739,11 +778,51 @@ const PaymentRequest = () => {
             action: 'approve',
             fieldChanged: 'status_approval',
             oldValue: 'Pending',
+            newValue: 'Manager Approved',
+            changedBy: userId,
+            changedByName: userName
+          });
+          showToast('Disetujui Manager. Menunggu Head Finance.', 'success');
+          await refreshData();
+          refreshNotifications();
+        } catch (error) {
+          console.error('Error approving payment request:', error);
+          showToast('Gagal menyetujui Payment Request', 'error');
+        }
+      }
+    });
+  };
+
+  const handleApproveHead = (pr) => {
+    if (pr.statusApproval !== 'Manager Approved') {
+      showToast('Hanya pengajuan Manager Approved yang bisa disetujui Head Finance', 'error');
+      return;
+    }
+    setConfirmDialog({
+      isOpen: true,
+      type: 'success',
+      title: 'Konfirmasi Approval Head Finance',
+      message: `Apakah Anda yakin ingin menyetujui Payment Request "${pr.nomorPr}"? Tindakan ini akan mengubah status menjadi Approved.`,
+      onConfirm: async () => {
+        try {
+          await updateRecord('payment_requests', pr.id, {
+            status_approval: 'Approved',
+            disetujui_oleh: userName || 'Head Finance',
+            head_finance_approved_by: userName || null,
+            head_finance_approved_at: new Date().toISOString()
+          });
+          await logActivity({
+            tableName: 'payment_requests',
+            recordId: pr.id,
+            recordNumber: pr.nomorPr,
+            action: 'approve',
+            fieldChanged: 'status_approval',
+            oldValue: 'Manager Approved',
             newValue: 'Approved',
             changedBy: userId,
             changedByName: userName
           });
-          showToast('Payment Request berhasil disetujui', 'success');
+          showToast('Disetujui Head Finance. Siap transfer.', 'success');
           await refreshData();
           refreshNotifications();
         } catch (error) {
@@ -764,7 +843,9 @@ const PaymentRequest = () => {
         try {
           await updateRecord('payment_requests', pr.id, {
             status_approval: 'Rejected',
-            disetujui_oleh: userName || 'Manager'
+            disetujui_oleh: userName || 'Manager',
+            rejected_by: userName || null,
+            rejected_at: new Date().toISOString()
           });
           // Log activity
           await logActivity({
@@ -773,7 +854,7 @@ const PaymentRequest = () => {
             recordNumber: pr.nomorPr,
             action: 'reject',
             fieldChanged: 'status_approval',
-            oldValue: 'Pending',
+            oldValue: pr.statusApproval,
             newValue: 'Rejected',
             changedBy: userId,
             changedByName: userName
@@ -1490,6 +1571,7 @@ const PaymentRequest = () => {
                     <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Keterangan</th>
                     <th className="text-center py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Status Approval</th>
                     <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Disetujui Oleh</th>
+                    <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Disetujui Head Finance</th>
                     <th className="text-center py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Status Transfer</th>
                     <th className="text-center py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Bukti Transfer</th>
                     <th className="text-center py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Aksi</th>
@@ -1536,7 +1618,10 @@ const PaymentRequest = () => {
                             <span className="text-sm text-gray-700">{isHidden ? 'CONFIDENTIAL' : (request.namaEvent || '-')}</span>
                           </td>
                           <td className="py-4 px-6">
-                            <span className="text-sm text-gray-600">{request.tanggal}</span>
+                            <div className="leading-tight">
+                              <div className="text-sm text-gray-600">{(request.tanggalJam || request.tanggal || '').split(' ')[0]}</div>
+                              <div className="text-[11px] text-gray-400">{(request.tanggalJam || '').split(' ')[1] || ''}</div>
+                            </div>
                           </td>
                           <td className="py-4 px-6">
                             {isHidden ? <span className="text-sm text-gray-400">CONFIDENTIAL</span> : <TipeBadge tipe={request.tipe} size="sm" />}
@@ -1605,6 +1690,9 @@ const PaymentRequest = () => {
                           <td className="py-4 px-6">
                             <span className="text-sm text-gray-700">{request.disetujuiOleh}</span>
                           </td>
+                          <td className="py-4 px-6">
+                            <span className="text-sm text-gray-700">{request.disetujuiHeadFinance || '-'}</span>
+                          </td>
                           <td className="py-4 px-6 text-center">
                             {getStatusTransferBadge(request.statusTransfer)}
                           </td>
@@ -1649,26 +1737,35 @@ const PaymentRequest = () => {
                                         <Edit2 className="w-4 h-4" />
                                         <span>Edit</span>
                                       </button>
-                                      {/* Only show Approve/Reject if status is Pending and user is Authorized */}
-                                      {isAuthorizedApprover && request.statusApproval === 'Pending' && (
-                                        <>
-                                          <button
-                                            onClick={() => handleApprove(request)}
-                                            className="flex items-center space-x-1 px-3 py-1.5 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 transition-colors text-sm font-medium"
-                                            title="Approve"
-                                          >
-                                            <CheckCircle className="w-4 h-4" />
-                                            <span>Approve</span>
-                                          </button>
-                                          <button
-                                            onClick={() => handleReject(request)}
-                                            className="flex items-center space-x-1 px-3 py-1.5 bg-rose-50 text-rose-600 rounded-lg hover:bg-rose-100 transition-colors text-sm font-medium"
-                                            title="Reject"
-                                          >
-                                            <XCircle className="w-4 h-4" />
-                                            <span>Reject</span>
-                                          </button>
-                                        </>
+                                      {canApproveManager && request.statusApproval === 'Pending' && (
+                                        <button
+                                          onClick={() => handleApprove(request)}
+                                          className="flex items-center space-x-1 px-3 py-1.5 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 transition-colors text-sm font-medium"
+                                          title="Approve Manager"
+                                        >
+                                          <CheckCircle className="w-4 h-4" />
+                                          <span>Approve</span>
+                                        </button>
+                                      )}
+                                      {canApproveHead && request.statusApproval === 'Manager Approved' && (
+                                        <button
+                                          onClick={() => handleApproveHead(request)}
+                                          className="flex items-center space-x-1 px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors text-sm font-medium"
+                                          title="Approve Head Finance"
+                                        >
+                                          <CheckCircle className="w-4 h-4" />
+                                          <span>Approve HF</span>
+                                        </button>
+                                      )}
+                                      {(canApproveManager || canApproveHead || isAuthorizedApprover) && (request.statusApproval === 'Pending' || request.statusApproval === 'Manager Approved') && (
+                                        <button
+                                          onClick={() => handleReject(request)}
+                                          className="flex items-center space-x-1 px-3 py-1.5 bg-rose-50 text-rose-600 rounded-lg hover:bg-rose-100 transition-colors text-sm font-medium"
+                                          title="Reject"
+                                        >
+                                          <XCircle className="w-4 h-4" />
+                                          <span>Reject</span>
+                                        </button>
                                       )}
                                       {canDelete && (
                                         <button

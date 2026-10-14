@@ -14,6 +14,7 @@ import PasteUpload from '../components/PasteUpload';
 import QLInfo from '../components/QLInfo';
 import { useRealtimeSubscription } from '../hooks/useRealtimeSubscription';
 import { generatePenyelesaianNumber } from '../utils/generateUniqueNumber';
+import { formatTanggalJamPendek, getStatusBadgeClass, calcDurations } from '../lib/approvalFlow';
 
 const Penyelesaian = () => {
   const navigate = useNavigate();
@@ -24,6 +25,8 @@ const Penyelesaian = () => {
   // Permission per-user (default mengikuti role, bisa dioverride Administrator dari halaman Karyawan)
   const isFinance = hasPermission ? hasPermission('transfer') : userRole === 'team_finance';
   const canManage = hasPermission ? hasPermission('approve') : ['administrator', 'manager', 'bod'].includes(userRole);
+  const canApproveManager = hasPermission ? (hasPermission('approve_manager') || hasPermission('approve')) : ['administrator', 'manager', 'bod'].includes(userRole);
+  const canApproveHead = hasPermission ? (hasPermission('approve_head_finance') || hasPermission('approve')) : ['administrator', 'head_finance'].includes(userRole);
   const canDelete = hasPermission ? hasPermission('delete_penyelesaian') : ['administrator', 'manager'].includes(userRole);
   const canEdit = hasPermission ? hasPermission('edit_penyelesaian') : ['administrator', 'manager', 'bod'].includes(userRole);
   const isAdmin = userRole === 'administrator';
@@ -161,6 +164,15 @@ const Penyelesaian = () => {
     nomorQl: item.nomor_ql || '',
     namaEvent: item.nama_event || '',
     tanggal: item.created_at ? new Date(item.created_at).toISOString().split('T')[0] : '',
+    tanggalJam: formatTanggalJamPendek(item.created_at),
+    manager_approved_at: item.manager_approved_at || null,
+    manager_approved_by: item.manager_approved_by || null,
+    head_finance_approved_at: item.head_finance_approved_at || null,
+    head_finance_approved_by: item.head_finance_approved_by || null,
+    transferred_at: item.transferred_at || null,
+    completed_at: item.completed_at || null,
+    rejected_at: item.rejected_at || null,
+    rejected_by: item.rejected_by || null,
     namaKaryawan: item.nama_karyawan || '',
     kasbonNominal: parseFloat(item.kasbon_nominal) || 0,
     totalPengeluaran: parseFloat(item.total_pengeluaran) || 0,
@@ -172,6 +184,7 @@ const Penyelesaian = () => {
     buktiKekurangan: item.bukti_kekurangan || null,
     statusApproval: item.status_approval || 'Pending',
     disetujuiOleh: item.nama_approver || '-',
+    disetujuiHeadFinance: item.head_finance_approved_by || '-',
     statusPenyelesaian: item.status_penyelesaian || 'Belum Selesai',
     detailPengeluaran: item.detail_pengeluaran || [],
     keterangan: item.keterangan || '',
@@ -294,10 +307,11 @@ const Penyelesaian = () => {
   const getStatusApprovalBadge = (status) => {
     const badges = {
       'Pending': 'bg-amber-50 text-amber-700',
+      'Manager Approved': 'bg-blue-50 text-blue-700',
       'Approved': 'bg-emerald-50 text-emerald-700',
       'Rejected': 'bg-rose-50 text-rose-700',
     };
-    return <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold ${badges[status]}`}>{status}</span>;
+    return <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold ${badges[status] || 'bg-gray-100 text-gray-700'}`}>{status}</span>;
   };
 
   const getStatusPenyelesaianBadge = (status) => {
@@ -442,13 +456,13 @@ const Penyelesaian = () => {
       setFileSize(file.size);
       setUploadProgress(0);
 
+      let progressInterval = null;
       try {
         const nomorPenyelesaian = formData.nomorPenyelesaian || generatePenyelesaianNumber();
 
-        const progressInterval = setInterval(() => {
+        progressInterval = setInterval(() => {
           setUploadProgress(prev => {
             if (prev >= 90) {
-              clearInterval(progressInterval);
               return 90;
             }
             return prev + 10;
@@ -457,7 +471,6 @@ const Penyelesaian = () => {
 
         const result = await uploadFile(file, 'penyelesaian', nomorPenyelesaian, userName);
 
-        clearInterval(progressInterval);
         setUploadProgress(100);
 
         // File lama yang tertimpa tidak dipakai lagi — hapus agar tidak yatim
@@ -471,12 +484,16 @@ const Penyelesaian = () => {
         showToast('Gagal mengupload file: ' + (error.message || 'Silakan coba lagi'), 'error');
         setFileName('');
         setFileSize(0);
+        setUploadProgress(0);
         setFormData(prev => ({ ...prev, lampiran: null }));
         e.target.value = '';
       } finally {
+        // WAJIB clear — sebelumnya interval bocor saat upload gagal
+        // sehingga progress jalan terus & tombol stuck
+        if (progressInterval) clearInterval(progressInterval);
         setUploadingFile(false);
-        setUploadProgress(0);
-        setTimeout(() => setFileSize(0), 1000);
+        // Biarkan status 100% terlihat sebentar saat sukses, baru reset
+        setTimeout(() => setUploadProgress(0), 2000);
       }
     }
   };
@@ -497,13 +514,13 @@ const Penyelesaian = () => {
       setFileSizePengembalian(file.size);
       setUploadProgressPengembalian(0);
 
+      let progressIntervalPengembalian = null;
       try {
         const nomorPenyelesaian = formData.nomorPenyelesaian || generatePenyelesaianNumber();
 
-        const progressInterval = setInterval(() => {
+        progressIntervalPengembalian = setInterval(() => {
           setUploadProgressPengembalian(prev => {
             if (prev >= 90) {
-              clearInterval(progressInterval);
               return 90;
             }
             return prev + 10;
@@ -512,7 +529,6 @@ const Penyelesaian = () => {
 
         const result = await uploadFile(file, 'penyelesaian', `${nomorPenyelesaian}-pengembalian`, userName);
 
-        clearInterval(progressInterval);
         setUploadProgressPengembalian(100);
 
         // File lama yang tertimpa tidak dipakai lagi — hapus agar tidak yatim
@@ -526,12 +542,16 @@ const Penyelesaian = () => {
         showToast('Gagal mengupload bukti pengembalian: ' + (error.message || 'Silakan coba lagi'), 'error');
         setFileNamePengembalian('');
         setFileSizePengembalian(0);
+        setUploadProgressPengembalian(0);
         setFormData(prev => ({ ...prev, lampiranPengembalian: null }));
         e.target.value = '';
       } finally {
+        // WAJIB clear — sebelumnya interval bocor saat upload gagal
+        // sehingga progress jalan terus & tombol stuck
+        if (progressIntervalPengembalian) clearInterval(progressIntervalPengembalian);
         setUploadingFilePengembalian(false);
-        setUploadProgressPengembalian(0);
-        setTimeout(() => setFileSizePengembalian(0), 1000);
+        // Biarkan status 100% terlihat sebentar saat sukses, baru reset
+        setTimeout(() => setUploadProgressPengembalian(0), 2000);
       }
     }
   };
@@ -731,6 +751,10 @@ const Penyelesaian = () => {
         keterangan: formData.keterangan || null,
         status_approval: isBOD ? 'Approved' : 'Pending',
         disetujui_oleh: isBOD ? userName : null,
+        manager_approved_by: isBOD ? userName : null,
+        manager_approved_at: isBOD ? new Date().toISOString() : null,
+        head_finance_approved_by: isBOD ? userName : null,
+        head_finance_approved_at: isBOD ? new Date().toISOString() : null,
         status_penyelesaian: 'Belum Selesai',
         is_confidential: isBOD || isHRD
       };
@@ -816,21 +840,23 @@ const Penyelesaian = () => {
     }
   };
 
-  // Handle Approve Penyelesaian
+  // Handle Approve Penyelesaian Tahap 1 (Manager): Pending -> Manager Approved
   const handleApprove = (penyelesaian) => {
     setConfirmDialog({
       isOpen: true,
       type: 'success',
-      title: 'Konfirmasi Approval',
-      message: `Apakah Anda yakin ingin menyetujui Penyelesaian "${penyelesaian.nomorPenyelesaian}"? Tindakan ini akan mengubah status menjadi Approved.`,
+      title: 'Approval Manager (Tahap 1)',
+      message: `Setujui sebagai Manager? "${penyelesaian.nomorPenyelesaian}" akan diteruskan ke Head Finance.`,
       onConfirm: async () => {
         try {
+          const nowIso = new Date().toISOString();
           await updateRecord('penyelesaian', penyelesaian.id, {
-            status_approval: 'Approved',
+            status_approval: 'Manager Approved',
             disetujui_oleh: userId || null,
-            nama_approver: userName || 'Manager'
+            nama_approver: userName || 'Manager',
+            manager_approved_by: userName || 'Manager',
+            manager_approved_at: nowIso
           });
-          // Log activity
           await logActivity({
             tableName: 'penyelesaian',
             recordId: penyelesaian.id,
@@ -838,11 +864,50 @@ const Penyelesaian = () => {
             action: 'approve',
             fieldChanged: 'status_approval',
             oldValue: 'Pending',
+            newValue: 'Manager Approved',
+            changedBy: userId,
+            changedByName: userName
+          });
+          showToast('Disetujui Manager. Menunggu approval Head Finance.', 'success');
+          await refreshData();
+          refreshNotifications();
+        } catch (error) {
+          console.error('Error approving penyelesaian:', error);
+          showToast('Gagal menyetujui Penyelesaian', 'error');
+        }
+      }
+    });
+  };
+
+  // Handle Approve Penyelesaian Tahap 2 (Head Finance): Manager Approved -> Approved
+  const handleApproveHead = (penyelesaian) => {
+    setConfirmDialog({
+      isOpen: true,
+      type: 'success',
+      title: 'Approval Head Finance (Tahap 2)',
+      message: `Setujui sebagai Head Finance? "${penyelesaian.nomorPenyelesaian}" akan dapat ditandai Selesai oleh Finance.`,
+      onConfirm: async () => {
+        try {
+          const nowIso = new Date().toISOString();
+          await updateRecord('penyelesaian', penyelesaian.id, {
+            status_approval: 'Approved',
+            disetujui_oleh: userId || null,
+            nama_approver: userName || 'Head Finance',
+            head_finance_approved_by: userName || 'Head Finance',
+            head_finance_approved_at: nowIso
+          });
+          await logActivity({
+            tableName: 'penyelesaian',
+            recordId: penyelesaian.id,
+            recordNumber: penyelesaian.nomorPenyelesaian,
+            action: 'approve',
+            fieldChanged: 'status_approval',
+            oldValue: 'Manager Approved',
             newValue: 'Approved',
             changedBy: userId,
             changedByName: userName
           });
-          showToast('Penyelesaian berhasil disetujui', 'success');
+          showToast('Disetujui Head Finance.', 'success');
           await refreshData();
           refreshNotifications();
         } catch (error) {
@@ -862,10 +927,13 @@ const Penyelesaian = () => {
       message: `Apakah Anda yakin ingin menolak Penyelesaian "${penyelesaian.nomorPenyelesaian}"? Tindakan ini akan mengubah status menjadi Rejected.`,
       onConfirm: async () => {
         try {
+          const nowIso = new Date().toISOString();
           await updateRecord('penyelesaian', penyelesaian.id, {
             status_approval: 'Rejected',
             disetujui_oleh: userId || null,
-            nama_approver: userName || 'Manager'
+            nama_approver: userName || 'Manager',
+            rejected_by: userName || 'Manager',
+            rejected_at: nowIso
           });
           // Log activity
           await logActivity({
@@ -874,7 +942,7 @@ const Penyelesaian = () => {
             recordNumber: penyelesaian.nomorPenyelesaian,
             action: 'reject',
             fieldChanged: 'status_approval',
-            oldValue: 'Pending',
+            oldValue: penyelesaian.statusApproval || 'Pending',
             newValue: 'Rejected',
             changedBy: userId,
             changedByName: userName
@@ -1227,6 +1295,7 @@ const Penyelesaian = () => {
                     <th className="text-center py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Lampiran</th>
                     <th className="text-center py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Status Approval</th>
                     <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Disetujui Oleh</th>
+                    <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Disetujui Head Finance</th>
                     <th className="text-center py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Status Penyelesaian</th>
                     <th className="text-center py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Aksi</th>
                   </tr>
@@ -1275,7 +1344,10 @@ const Penyelesaian = () => {
                           })()}
                         </td>
                         <td className="py-4 px-6">
-                          <span className="text-sm text-gray-600">{penyelesaian.tanggal}</span>
+                          <div className="text-sm text-gray-600 whitespace-nowrap">{penyelesaian.tanggal}</div>
+                          {penyelesaian.tanggalJam && penyelesaian.tanggalJam !== '-' && (
+                            <div className="text-xs text-gray-400 whitespace-nowrap">{penyelesaian.tanggalJam.split(' ')[1] || ''}</div>
+                          )}
                         </td>
                         <td className="py-4 px-6">
                           <span className="text-sm text-gray-700 font-medium">{isHidden ? 'CONFIDENTIAL' : penyelesaian.namaKaryawan}</span>
@@ -1336,6 +1408,9 @@ const Penyelesaian = () => {
                         <td className="py-4 px-6">
                           <span className="text-sm text-gray-700">{isHidden ? '***' : penyelesaian.disetujuiOleh}</span>
                         </td>
+                        <td className="py-4 px-6">
+                          <span className="text-sm text-gray-700">{isHidden ? '***' : (penyelesaian.disetujuiHeadFinance || '-')}</span>
+                        </td>
                         <td className="py-4 px-6 text-center">
                           {isHidden ? <span className="text-xs text-gray-400">CONFIDENTIAL</span> : getStatusPenyelesaianBadge(penyelesaian.statusPenyelesaian)}
                         </td>
@@ -1349,16 +1424,38 @@ const Penyelesaian = () => {
                               <span>Detail</span>
                             </button>
 
-                            {/* Aksi Approve/Reject untuk Manager/Admin/BOD */}
-                            {canManage && penyelesaian.statusApproval === 'Pending' && (
+                            {/* Approve Tahap 1 (Manager): Pending -> Manager Approved */}
+                            {canApproveManager && penyelesaian.statusApproval === 'Pending' && (
                               <>
                                 <button
                                   onClick={() => handleApprove(penyelesaian)}
                                   className="flex items-center space-x-1 px-3 py-1.5 bg-green-50 text-green-600 rounded-lg hover:bg-green-100 transition-colors text-sm font-medium"
-                                  title="Approve"
+                                  title="Approve Manager"
                                 >
                                   <CheckCircle className="w-4 h-4" />
                                   <span>Approve</span>
+                                </button>
+                                <button
+                                  onClick={() => handleReject(penyelesaian)}
+                                  className="flex items-center space-x-1 px-3 py-1.5 bg-orange-50 text-orange-600 rounded-lg hover:bg-orange-100 transition-colors text-sm font-medium"
+                                  title="Reject"
+                                >
+                                  <XCircle className="w-4 h-4" />
+                                  <span>Reject</span>
+                                </button>
+                              </>
+                            )}
+
+                            {/* Approve Tahap 2 (Head Finance): Manager Approved -> Approved */}
+                            {canApproveHead && penyelesaian.statusApproval === 'Manager Approved' && (
+                              <>
+                                <button
+                                  onClick={() => handleApproveHead(penyelesaian)}
+                                  className="flex items-center space-x-1 px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors text-sm font-medium"
+                                  title="Approve Head Finance"
+                                >
+                                  <CheckCircle className="w-4 h-4" />
+                                  <span>Approve HF</span>
                                 </button>
                                 <button
                                   onClick={() => handleReject(penyelesaian)}
@@ -1424,7 +1521,7 @@ const Penyelesaian = () => {
                   })
                   ) : (
                     <tr>
-                      <td colSpan="13" className="py-12 text-center">
+                      <td colSpan="14" className="py-12 text-center">
                         <div className="flex flex-col items-center justify-center space-y-3">
                           <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center">
                             <Search className="w-8 h-8 text-gray-400" />

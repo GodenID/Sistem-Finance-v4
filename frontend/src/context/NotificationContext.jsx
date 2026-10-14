@@ -78,27 +78,49 @@ export const NotificationProvider = ({ children }) => {
     try {
       setIsLoading(true);
 
-      const isApprover = ['administrator', 'bod', 'manager'].includes(userRole);
-      const isFinance = userRole === 'team_finance';
+      const isManagerApprover = ['administrator', 'bod', 'manager'].includes(userRole);
+      const isHeadFinance = ['administrator', 'head_finance'].includes(userRole);
+      const isFinance = ['administrator', 'team_finance'].includes(userRole);
+      const isAdmin = userRole === 'administrator';
 
       let prData = [];
       let kasbonData = [];
       let klaimData = [];
       let penyelesaianData = [];
+      // Antrean tahap 2 (menunggu Head Finance)
+      let prHead = [];
+      let kasbonHead = [];
+      let klaimHead = [];
+      let penyelesaianHead = [];
+      // Antrean tahap 3 (siap transfer Finance)
+      let prFin = [];
+      let kasbonFin = [];
+      let klaimFin = [];
+      let penyelesaianFin = [];
       let recurringInstancesData = [];
       let recurringTemplatesData = [];
 
-      if (isApprover) {
-        // Hanya yang Pending, kolom notifikasi saja
+      if (isManagerApprover) {
+        // Tahap 1: Pending -> notifikasi Manager (+ admin, BOD)
         [prData, kasbonData, klaimData, penyelesaianData] = await Promise.all([
           pick(supabase.from('payment_requests').select('id,nomor_pr,nominal,created_at,status_approval').eq('status_approval', 'Pending').order('created_at', { ascending: false }).limit(50)),
           pick(supabase.from('kasbon').select('id,nomor_kasbon,nominal,created_at,status_approval').eq('status_approval', 'Pending').order('created_at', { ascending: false }).limit(50)),
           pick(supabase.from('klaim').select('id,nomor_klaim,nominal,created_at,status_approval').eq('status_approval', 'Pending').order('created_at', { ascending: false }).limit(50)),
           pick(supabase.from('penyelesaian').select('id,nomor_penyelesaian,total_pengeluaran,total_nominal,created_at,status_approval').eq('status_approval', 'Pending').order('created_at', { ascending: false }).limit(50)),
         ]);
-      } else if (isFinance) {
-        // Hanya yang Approved tapi belum transfer/selesai
-        [prData, kasbonData, klaimData, penyelesaianData] = await Promise.all([
+      }
+      if (isHeadFinance) {
+        // Tahap 2: Manager Approved -> notifikasi Head Finance (+ admin)
+        [prHead, kasbonHead, klaimHead, penyelesaianHead] = await Promise.all([
+          pick(supabase.from('payment_requests').select('id,nomor_pr,nominal,created_at,status_approval').eq('status_approval', 'Manager Approved').order('created_at', { ascending: false }).limit(50)),
+          pick(supabase.from('kasbon').select('id,nomor_kasbon,nominal,created_at,status_approval').eq('status_approval', 'Manager Approved').order('created_at', { ascending: false }).limit(50)),
+          pick(supabase.from('klaim').select('id,nomor_klaim,nominal,created_at,status_approval').eq('status_approval', 'Manager Approved').order('created_at', { ascending: false }).limit(50)),
+          pick(supabase.from('penyelesaian').select('id,nomor_penyelesaian,total_pengeluaran,total_nominal,created_at,status_approval').eq('status_approval', 'Manager Approved').order('created_at', { ascending: false }).limit(50)),
+        ]);
+      }
+      if (isFinance) {
+        // Tahap 3: Approved final tapi belum transfer/selesai
+        [prFin, kasbonFin, klaimFin, penyelesaianFin] = await Promise.all([
           pick(supabase.from('payment_requests').select('id,nomor_pr,nominal,created_at,status_approval,status_transfer').eq('status_approval', 'Approved').eq('status_transfer', 'Belum Transfer').order('created_at', { ascending: false }).limit(50)),
           pick(supabase.from('kasbon').select('id,nomor_kasbon,nominal,created_at,status_approval,status_transfer').eq('status_approval', 'Approved').eq('status_transfer', 'Belum Transfer').order('created_at', { ascending: false }).limit(50)),
           pick(supabase.from('klaim').select('id,nomor_klaim,nominal,created_at,status_approval,status_transfer').eq('status_approval', 'Approved').eq('status_transfer', 'Belum Transfer').order('created_at', { ascending: false }).limit(50)),
@@ -124,72 +146,115 @@ export const NotificationProvider = ({ children }) => {
 
       let notifList = [];
 
-      // Logic berdasarkan role
+      // TAHAP 1 — Manager / BOD / Admin: Pending menunggu approve manager
       if (['administrator', 'bod', 'manager'].includes(userRole)) {
-        // Admin/BOD/Manager: Tampilkan yang perlu di-approve (status_approval = 'Pending')
-        const pendingPR = prData.filter(pr => pr.status_approval === 'Pending');
-        const pendingKasbon = kasbonData.filter(kb => kb.status_approval === 'Pending');
-        const pendingKlaim = klaimData.filter(kl => kl.status_approval === 'Pending');
-        const pendingPenyelesaian = penyelesaianData.filter(p => p.status_approval === 'Pending');
-
-        // Build notification list
-        pendingPR.forEach(pr => {
+        prData.filter(pr => pr.status_approval === 'Pending').forEach(pr => {
           notifList.push({
             id: pr.id,
             type: 'payment_request',
-            title: 'Payment Request Pending',
-            message: `${pr.nomor_pr} menunggu approval`,
+            title: 'PR Menunggu Manager',
+            message: `${pr.nomor_pr} menunggu approval Manager`,
             nominal: pr.nominal,
             createdAt: pr.created_at,
             link: `/payment-request/${pr.id}`
           });
         });
 
-        pendingKasbon.forEach(kb => {
+        kasbonData.filter(kb => kb.status_approval === 'Pending').forEach(kb => {
           notifList.push({
             id: kb.id,
             type: 'kasbon',
-            title: 'Kasbon Pending',
-            message: `${kb.nomor_kasbon} menunggu approval`,
+            title: 'Kasbon Menunggu Manager',
+            message: `${kb.nomor_kasbon} menunggu approval Manager`,
             nominal: kb.nominal,
             createdAt: kb.created_at,
             link: `/kasbon/${kb.id}`
           });
         });
 
-        pendingKlaim.forEach(kl => {
+        klaimData.filter(kl => kl.status_approval === 'Pending').forEach(kl => {
           notifList.push({
             id: kl.id,
             type: 'klaim',
-            title: 'Klaim Pending',
-            message: `${kl.nomor_klaim} menunggu approval`,
+            title: 'Klaim Menunggu Manager',
+            message: `${kl.nomor_klaim} menunggu approval Manager`,
             nominal: kl.nominal,
             createdAt: kl.created_at,
             link: `/klaim/${kl.id}`
           });
         });
 
-        pendingPenyelesaian.forEach(p => {
+        penyelesaianData.filter(p => p.status_approval === 'Pending').forEach(p => {
           notifList.push({
             id: p.id,
             type: 'penyelesaian',
-            title: 'Penyelesaian Pending',
-            message: `${p.nomor_penyelesaian} menunggu approval`,
+            title: 'Penyelesaian Menunggu Manager',
+            message: `${p.nomor_penyelesaian} menunggu approval Manager`,
             nominal: p.total_pengeluaran || p.total_nominal,
             createdAt: p.created_at,
             link: `/penyelesaian/${p.id}`
           });
         });
+      }
 
-      } else if (userRole === 'team_finance') {
+      // TAHAP 2 — Head Finance / Admin: Manager Approved menunggu approve head finance
+      if (['administrator', 'head_finance'].includes(userRole)) {
+        prHead.forEach(pr => {
+          notifList.push({
+            id: pr.id,
+            type: 'payment_request_head',
+            title: 'PR Menunggu Head Finance',
+            message: `${pr.nomor_pr} sudah di-approve Manager, menunggu Head Finance`,
+            nominal: pr.nominal,
+            createdAt: pr.created_at,
+            link: `/payment-request/${pr.id}`
+          });
+        });
+        kasbonHead.forEach(kb => {
+          notifList.push({
+            id: kb.id,
+            type: 'kasbon_head',
+            title: 'Kasbon Menunggu Head Finance',
+            message: `${kb.nomor_kasbon} sudah di-approve Manager, menunggu Head Finance`,
+            nominal: kb.nominal,
+            createdAt: kb.created_at,
+            link: `/kasbon/${kb.id}`
+          });
+        });
+        klaimHead.forEach(kl => {
+          notifList.push({
+            id: kl.id,
+            type: 'klaim_head',
+            title: 'Klaim Menunggu Head Finance',
+            message: `${kl.nomor_klaim} sudah di-approve Manager, menunggu Head Finance`,
+            nominal: kl.nominal,
+            createdAt: kl.created_at,
+            link: `/klaim/${kl.id}`
+          });
+        });
+        penyelesaianHead.forEach(p => {
+          notifList.push({
+            id: p.id,
+            type: 'penyelesaian_head',
+            title: 'Penyelesaian Menunggu Head Finance',
+            message: `${p.nomor_penyelesaian} sudah di-approve Manager, menunggu Head Finance`,
+            nominal: p.total_pengeluaran || p.total_nominal,
+            createdAt: p.created_at,
+            link: `/penyelesaian/${p.id}`
+          });
+        });
+      }
+
+      // TAHAP 3 — Team Finance / Admin: Approved final menunggu transfer
+      if (['administrator', 'team_finance'].includes(userRole)) {
         // Team Finance: Tampilkan yang sudah approved tapi belum transfer
-        const needTransferPR = prData.filter(
+        const needTransferPR = prFin.filter(
           pr => pr.status_approval === 'Approved' && pr.status_transfer === 'Belum Transfer'
         );
-        const needTransferKasbon = kasbonData.filter(
+        const needTransferKasbon = kasbonFin.filter(
           kb => kb.status_approval === 'Approved' && kb.status_transfer === 'Belum Transfer'
         );
-        const needTransferKlaim = klaimData.filter(
+        const needTransferKlaim = klaimFin.filter(
           kl => kl.status_approval === 'Approved' && kl.status_transfer === 'Belum Transfer'
         );
 
@@ -198,7 +263,7 @@ export const NotificationProvider = ({ children }) => {
             id: pr.id,
             type: 'payment_request',
             title: 'PR Belum Transfer',
-            message: `${pr.nomor_pr} sudah approved, menunggu transfer`,
+            message: `${pr.nomor_pr} disetujui Head Finance, menunggu transfer`,
             nominal: pr.nominal,
             createdAt: pr.created_at,
             link: `/payment-request/${pr.id}`
@@ -210,7 +275,7 @@ export const NotificationProvider = ({ children }) => {
             id: kb.id,
             type: 'kasbon',
             title: 'Kasbon Belum Transfer',
-            message: `${kb.nomor_kasbon} sudah approved, menunggu transfer`,
+            message: `${kb.nomor_kasbon} disetujui Head Finance, menunggu transfer`,
             nominal: kb.nominal,
             createdAt: kb.created_at,
             link: `/kasbon/${kb.id}`
@@ -222,7 +287,7 @@ export const NotificationProvider = ({ children }) => {
             id: kl.id,
             type: 'klaim',
             title: 'Klaim Belum Transfer',
-            message: `${kl.nomor_klaim} sudah approved, menunggu transfer`,
+            message: `${kl.nomor_klaim} disetujui Head Finance, menunggu transfer`,
             nominal: kl.nominal,
             createdAt: kl.created_at,
             link: `/klaim/${kl.id}`
@@ -230,8 +295,8 @@ export const NotificationProvider = ({ children }) => {
         });
 
         // Penyelesaian yang sudah approved tapi belum selesai
-        const needCompletePenyelesaian = penyelesaianData.filter(
-          p => p.status_approval === 'Approved' && p.status_penyelesaian === 'Belum Selesai'
+        const needCompletePenyelesaian = penyelesaianFin.filter(
+          p => p.status_approval === 'Approved' && p.status_penyelesaian !== 'Selesai'
         );
 
         needCompletePenyelesaian.forEach(p => {

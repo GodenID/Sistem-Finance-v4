@@ -3,6 +3,19 @@
 
 export const changelog = [
   {
+    version: '4.1',
+    date: '2026-10-14',
+    isNew: true,
+    changes: [
+      { type: 'new', text: 'Alur approval 3 tahap: Pengajuan → Manager → Head Finance → Transfer Finance (berlaku PR, Kasbon, Klaim, Penyelesaian)' },
+      { type: 'new', text: 'Role baru Head Finance — admin menunjuk karyawan sebagai Head Finance di menu Karyawan' },
+      { type: 'new', text: 'Tanggal & jam (waktu) tercatat di setiap pengajuan, approval Manager, approval Head Finance, dan transfer' },
+      { type: 'new', text: 'Durasi SLA otomatis: lama approval Manager, lama approval Head Finance, lama transfer — tampil di timeline detail & export Laporan' },
+      { type: 'new', text: 'Notifikasi per tahap: Manager terima Pending, Head Finance terima Manager Approved, Finance terima Approved siap transfer' },
+      { type: 'improved', text: 'Dashboard & Laporan menampilkan status Manager Approved' },
+    ]
+  },
+  {
     version: '4.0',
     date: '2026-09-07',
     isNew: true,

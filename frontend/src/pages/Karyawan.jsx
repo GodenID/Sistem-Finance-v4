@@ -357,6 +357,7 @@ const Karyawan = () => {
     const badges = {
       'administrator': 'bg-red-100 text-red-700',
       'team_finance': 'bg-blue-100 text-blue-700',
+      'head_finance': 'bg-indigo-100 text-indigo-700',
       'bod': 'bg-purple-100 text-purple-700',
       'hrd': 'bg-pink-100 text-pink-700',
       'manager': 'bg-green-100 text-green-700',
@@ -366,6 +367,7 @@ const Karyawan = () => {
     return (
       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${badges[role] || badges.staff}`}>
         {role === 'team_finance' ? 'Team Finance' :
+          role === 'head_finance' ? 'Head Finance' :
           role === 'bod' ? 'BOD' :
             role === 'hrd' ? 'HRD' :
               role.charAt(0).toUpperCase() + role.slice(1)}
@@ -633,6 +635,7 @@ const Karyawan = () => {
                   <option value="manager">Manager</option>
                   <option value="hrd">HRD</option>
                   <option value="team_finance">Team Finance</option>
+                  <option value="head_finance">Head Finance</option>
                   <option value="bod">BOD</option>
                   <option value="administrator">Administrator</option>
                   <option value="guest">Guest</option>
@@ -804,6 +807,7 @@ const Karyawan = () => {
                   <option value="manager">Manager</option>
                   <option value="hrd">HRD</option>
                   <option value="team_finance">Team Finance</option>
+                  <option value="head_finance">Head Finance</option>
                   <option value="bod">BOD</option>
                   <option value="administrator">Administrator</option>
                   <option value="guest">Guest</option>

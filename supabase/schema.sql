@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS users (
     email VARCHAR(255),
     email_notifications_enabled BOOLEAN DEFAULT true,
     status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'suspended')),
-    role VARCHAR(50) NOT NULL CHECK (role IN ('administrator', 'team_finance', 'bod', 'hrd', 'staff', 'manager', 'guest')),
+    role VARCHAR(50) NOT NULL CHECK (role IN ('administrator', 'team_finance', 'head_finance', 'bod', 'hrd', 'staff', 'manager', 'guest')),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE
 );
@@ -46,8 +46,15 @@ CREATE TABLE IF NOT EXISTS payment_requests (
     lampiran TEXT, -- Menyimpan R2 URL
     bukti_transfer TEXT, -- URL bukti transfer dari R2
     status_transfer VARCHAR(20) DEFAULT 'Belum Transfer' CHECK (status_transfer IN ('Belum Transfer', 'Sudah Transfer')),
-    status_approval VARCHAR(20) DEFAULT 'Pending' CHECK (status_approval IN ('Pending', 'Approved', 'Rejected')),
+    status_approval VARCHAR(20) DEFAULT 'Pending' CHECK (status_approval IN ('Pending', 'Manager Approved', 'Approved', 'Rejected')),
     disetujui_oleh VARCHAR(255), -- Nama user yang approve
+    manager_approved_by TEXT,
+    manager_approved_at TIMESTAMP WITH TIME ZONE,
+    head_finance_approved_by TEXT,
+    head_finance_approved_at TIMESTAMP WITH TIME ZONE,
+    transferred_at TIMESTAMP WITH TIME ZONE,
+    rejected_by TEXT,
+    rejected_at TIMESTAMP WITH TIME ZONE,
     nama_karyawan VARCHAR(255), -- Nama karyawan yang membuat PR
     created_by UUID REFERENCES users(id) ON DELETE SET NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -69,9 +76,16 @@ CREATE TABLE IF NOT EXISTS kasbon (
     nama_pemilik_rekening VARCHAR(255),
     keterangan TEXT,
     bukti_transfer TEXT, -- URL bukti transfer dari R2 (wajib jika metode = Transfer)
-    status_approval VARCHAR(20) DEFAULT 'Pending' CHECK (status_approval IN ('Pending', 'Approved', 'Rejected')),
+    status_approval VARCHAR(20) DEFAULT 'Pending' CHECK (status_approval IN ('Pending', 'Manager Approved', 'Approved', 'Rejected')),
     status_transfer VARCHAR(20) DEFAULT 'Belum Transfer' CHECK (status_transfer IN ('Belum Transfer', 'Sudah Transfer')),
     disetujui_oleh UUID REFERENCES users(id) ON DELETE SET NULL,
+    manager_approved_by TEXT,
+    manager_approved_at TIMESTAMP WITH TIME ZONE,
+    head_finance_approved_by TEXT,
+    head_finance_approved_at TIMESTAMP WITH TIME ZONE,
+    transferred_at TIMESTAMP WITH TIME ZONE,
+    rejected_by TEXT,
+    rejected_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE
 );
@@ -92,9 +106,16 @@ CREATE TABLE IF NOT EXISTS klaim (
     lampiran TEXT, -- Menyimpan R2 URL
     keterangan TEXT,
     bukti_transfer TEXT, -- URL bukti transfer dari R2 (wajib jika metode = Transfer)
-    status_approval VARCHAR(20) DEFAULT 'Pending' CHECK (status_approval IN ('Pending', 'Approved', 'Rejected')),
+    status_approval VARCHAR(20) DEFAULT 'Pending' CHECK (status_approval IN ('Pending', 'Manager Approved', 'Approved', 'Rejected')),
     status_transfer VARCHAR(20) DEFAULT 'Belum Transfer' CHECK (status_transfer IN ('Belum Transfer', 'Sudah Transfer')),
     disetujui_oleh UUID REFERENCES users(id) ON DELETE SET NULL,
+    manager_approved_by TEXT,
+    manager_approved_at TIMESTAMP WITH TIME ZONE,
+    head_finance_approved_by TEXT,
+    head_finance_approved_at TIMESTAMP WITH TIME ZONE,
+    transferred_at TIMESTAMP WITH TIME ZONE,
+    rejected_by TEXT,
+    rejected_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE
 );

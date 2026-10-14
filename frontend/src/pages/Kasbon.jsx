@@ -18,6 +18,7 @@ import PasteUpload from '../components/PasteUpload';
 import { useRealtimeSubscription } from '../hooks/useRealtimeSubscription';
 import { generateKasbonNumber } from '../utils/generateUniqueNumber';
 import { sendTransferNotification } from '../lib/emailNotifications';
+import { formatTanggalJamPendek, getStatusBadgeClass, calcDurations } from '../lib/approvalFlow';
 
 const Kasbon = () => {
   const navigate = useNavigate();
@@ -28,6 +29,8 @@ const Kasbon = () => {
   // Permission per-user (default mengikuti role, bisa dioverride Administrator dari halaman Karyawan)
   const isFinance = hasPermission ? hasPermission('transfer') : userRole === 'team_finance';
   const canManage = hasPermission ? hasPermission('approve') : ['administrator', 'manager', 'bod'].includes(userRole);
+  const canApproveManager = hasPermission ? (hasPermission('approve_manager') || hasPermission('approve')) : ['administrator', 'manager', 'bod'].includes(userRole?.toLowerCase?.() ?? userRole);
+  const canApproveHead = hasPermission ? (hasPermission('approve_head_finance') || hasPermission('approve')) : ['administrator', 'head_finance'].includes(userRole?.toLowerCase?.() ?? userRole);
   const isAdmin = userRole?.toLowerCase() === 'administrator';
   const canEditDelete = hasPermission ? hasPermission('edit_kasbon') : ['administrator', 'bod', 'team_finance'].includes(userRole?.toLowerCase());
   const canDelete = hasPermission ? hasPermission('delete_kasbon') : ['administrator', 'bod'].includes(userRole?.toLowerCase());
@@ -89,17 +92,21 @@ const Kasbon = () => {
 
   // FIX #1 & #2: pagination + search + filter di server (Supabase .range/.or),
   // browser hanya menerima 1 halaman (10 row), bukan ribuan row.
-  const transformKasbonRow = useCallback((item) => ({
+  const transformKasbonRow = useCallback((item) => {
+    const sla = calcDurations(item);
+    return {
     id: item.id,
     nomorKasbon: item.nomor_kasbon,
     nomorQl: item.nomor_ql || '',
     namaEvent: item.nama_event || '',
     tanggal: item.created_at ? new Date(item.created_at).toISOString().split('T')[0] : '',
+    tanggalJam: item.created_at ? formatTanggalJamPendek(item.created_at) : '-',
     tipe: item.tipe || '',
     idPerusahaan: item.id_perusahaan || '',
     nominal: parseFloat(item.nominal) || 0,
     statusApproval: item.status_approval || 'Pending',
     disetujuiOleh: item.nama_approver || '-',
+    disetujuiHeadFinance: item.head_finance_approved_by || '-',
     statusTransfer: item.status_transfer || 'Belum Transfer',
     keterangan: item.keterangan || '',
     buktiTransfer: item.bukti_transfer || null,
@@ -110,8 +117,19 @@ const Kasbon = () => {
     nomorRekening: item.nomor_rekening || '',
     namaPemilikRekening: item.nama_pemilik_rekening || '',
     statusPenyelesaian: item.status_penyelesaian || 'Belum Diselesaikan',
-    isConfidential: item.is_confidential || false
-  }), []);
+    isConfidential: item.is_confidential || false,
+    manager_approved_at: item.manager_approved_at || null,
+    manager_approved_by: item.manager_approved_by || null,
+    head_finance_approved_at: item.head_finance_approved_at || null,
+    head_finance_approved_by: item.head_finance_approved_by || null,
+    transferred_at: item.transferred_at || null,
+    rejected_at: item.rejected_at || null,
+    rejected_by: item.rejected_by || null,
+    durasiManager: sla.manager,
+    durasiHeadFinance: sla.headFinance,
+    durasiTransfer: sla.transfer
+    };
+  }, []);
 
   const serverFilters = useMemo(() => {
     const f = {};
@@ -206,10 +224,11 @@ const Kasbon = () => {
   const getStatusApprovalBadge = (status) => {
     const badges = {
       'Pending': 'bg-amber-50 text-amber-700',
+      'Manager Approved': 'bg-blue-50 text-blue-700',
       'Approved': 'bg-emerald-50 text-emerald-700',
       'Rejected': 'bg-rose-50 text-rose-700',
     };
-    return <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold ${badges[status]}`}>{status}</span>;
+    return <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold ${badges[status] || getStatusBadgeClass(status)}`}>{status}</span>;
   };
 
   const getStatusTransferBadge = (status) => {
@@ -334,6 +353,10 @@ const Kasbon = () => {
         kasbonData.status_transfer = 'Belum Transfer';
         kasbonData.disetujui_oleh = isBOD ? userId : null;
         kasbonData.nama_approver = isBOD ? userName : null;
+        kasbonData.manager_approved_by = isBOD ? userName : null;
+        kasbonData.manager_approved_at = isBOD ? new Date().toISOString() : null;
+        kasbonData.head_finance_approved_by = isBOD ? userName : null;
+        kasbonData.head_finance_approved_at = isBOD ? new Date().toISOString() : null;
         kasbonData.is_confidential = isBOD || isHRD;
 
         // Generate unique nomor kasbon at submit time to prevent conflicts
@@ -515,17 +538,23 @@ const Kasbon = () => {
 
   // Handle Approve Kasbon
   const handleApprove = (kasbon) => {
+    if (kasbon.statusApproval !== 'Pending') {
+      showToast('Hanya kasbon Pending yang bisa disetujui Manager', 'error');
+      return;
+    }
     setConfirmDialog({
       isOpen: true,
       type: 'success',
-      title: 'Konfirmasi Approval',
-      message: `Apakah Anda yakin ingin menyetujui Kasbon "${kasbon.nomorKasbon}"? Tindakan ini akan mengubah status menjadi Approved.`,
+      title: 'Konfirmasi Approval Manager',
+      message: `Apakah Anda yakin ingin menyetujui Kasbon "${kasbon.nomorKasbon}"? Tindakan ini akan mengubah status menjadi Manager Approved.`,
       onConfirm: async () => {
         try {
           await updateRecord('kasbon', kasbon.id, {
-            status_approval: 'Approved',
+            status_approval: 'Manager Approved',
             disetujui_oleh: userId || null,
-            nama_approver: userName || 'Manager'
+            nama_approver: userName || 'Manager',
+            manager_approved_by: userName || null,
+            manager_approved_at: new Date().toISOString()
           });
           // Log activity
           await logActivity({
@@ -535,11 +564,52 @@ const Kasbon = () => {
             action: 'approve',
             fieldChanged: 'status_approval',
             oldValue: 'Pending',
+            newValue: 'Manager Approved',
+            changedBy: userId,
+            changedByName: userName
+          });
+          showToast('Disetujui Manager. Menunggu Head Finance.', 'success');
+          await refreshData();
+          refreshNotifications();
+        } catch (error) {
+          console.error('Error approving kasbon:', error);
+          showToast('Gagal menyetujui Kasbon', 'error');
+        }
+      }
+    });
+  };
+
+  const handleApproveHead = (kasbon) => {
+    if (kasbon.statusApproval !== 'Manager Approved') {
+      showToast('Hanya kasbon Manager Approved yang bisa disetujui Head Finance', 'error');
+      return;
+    }
+    setConfirmDialog({
+      isOpen: true,
+      type: 'success',
+      title: 'Konfirmasi Approval Head Finance',
+      message: `Apakah Anda yakin ingin menyetujui Kasbon "${kasbon.nomorKasbon}"? Tindakan ini akan mengubah status menjadi Approved.`,
+      onConfirm: async () => {
+        try {
+          await updateRecord('kasbon', kasbon.id, {
+            status_approval: 'Approved',
+            disetujui_oleh: userId || null,
+            nama_approver: userName || 'Head Finance',
+            head_finance_approved_by: userName || null,
+            head_finance_approved_at: new Date().toISOString()
+          });
+          await logActivity({
+            tableName: 'kasbon',
+            recordId: kasbon.id,
+            recordNumber: kasbon.nomorKasbon,
+            action: 'approve',
+            fieldChanged: 'status_approval',
+            oldValue: 'Manager Approved',
             newValue: 'Approved',
             changedBy: userId,
             changedByName: userName
           });
-          showToast('Kasbon berhasil disetujui', 'success');
+          showToast('Disetujui Head Finance. Siap transfer.', 'success');
           await refreshData();
           refreshNotifications();
         } catch (error) {
@@ -562,7 +632,9 @@ const Kasbon = () => {
           await updateRecord('kasbon', kasbon.id, {
             status_approval: 'Rejected',
             disetujui_oleh: userId || null,
-            nama_approver: userName || 'Manager'
+            nama_approver: userName || 'Manager',
+            rejected_by: userName || null,
+            rejected_at: new Date().toISOString()
           });
           // Log activity
           await logActivity({
@@ -571,7 +643,7 @@ const Kasbon = () => {
             recordNumber: kasbon.nomorKasbon,
             action: 'reject',
             fieldChanged: 'status_approval',
-            oldValue: 'Pending',
+            oldValue: kasbon.statusApproval,
             newValue: 'Rejected',
             changedBy: userId,
             changedByName: userName
@@ -992,6 +1064,7 @@ const Kasbon = () => {
                     <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Keterangan</th>
                     <th className="text-center py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Status Approval</th>
                     <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Disetujui Oleh</th>
+                    <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Disetujui Head Finance</th>
                     <th className="text-center py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Status Transfer</th>
                     <th className="text-center py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Status Penyelesaian</th>
                     <th className="text-center py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Bukti Transfer</th>
@@ -1035,7 +1108,10 @@ const Kasbon = () => {
                           <span className="text-sm text-gray-700">{isHidden ? 'CONFIDENTIAL' : (kasbon.namaEvent || '-')}</span>
                         </td>
                         <td className="py-4 px-6">
-                          <span className="text-sm text-gray-600">{kasbon.tanggal}</span>
+                          <div className="leading-tight">
+                            <div className="text-sm text-gray-600">{(kasbon.tanggalJam || kasbon.tanggal || '').split(' ')[0]}</div>
+                            <div className="text-[11px] text-gray-400">{(kasbon.tanggalJam || '').split(' ')[1] || ''}</div>
+                          </div>
                         </td>
                         <td className="py-4 px-6">
                           {isHidden ? <span className="text-sm text-gray-400">CONFIDENTIAL</span> : <TipeBadge tipe={kasbon.tipe} size="sm" />}
@@ -1092,6 +1168,9 @@ const Kasbon = () => {
                         <td className="py-4 px-6">
                           <span className="text-sm text-gray-700">{isHidden ? '***' : kasbon.disetujuiOleh}</span>
                         </td>
+                        <td className="py-4 px-6">
+                          <span className="text-sm text-gray-700">{isHidden ? '***' : (kasbon.disetujuiHeadFinance || '-')}</span>
+                        </td>
                         <td className="py-4 px-6 text-center">
                           {isHidden ? <span className="text-xs text-gray-400">CONFIDENTIAL</span> : getStatusTransferBadge(kasbon.statusTransfer)}
                         </td>
@@ -1130,26 +1209,35 @@ const Kasbon = () => {
                             </button>
                             )}
 
-                            {/* Aksi Approve/Reject untuk Manager/Admin/BOD */}
-                            {canManage && kasbon.statusApproval === 'Pending' && (
-                              <>
-                                <button
-                                  onClick={() => handleApprove(kasbon)}
-                                  className="flex items-center space-x-1 px-3 py-1.5 bg-green-50 text-green-600 rounded-lg hover:bg-green-100 transition-colors text-sm font-medium"
-                                  title="Approve"
-                                >
-                                  <CheckCircle className="w-4 h-4" />
-                                  <span>Approve</span>
-                                </button>
-                                <button
-                                  onClick={() => handleReject(kasbon)}
-                                  className="flex items-center space-x-1 px-3 py-1.5 bg-orange-50 text-orange-600 rounded-lg hover:bg-orange-100 transition-colors text-sm font-medium"
-                                  title="Reject"
-                                >
-                                  <XCircle className="w-4 h-4" />
-                                  <span>Reject</span>
-                                </button>
-                              </>
+                            {canApproveManager && kasbon.statusApproval === 'Pending' && (
+                              <button
+                                onClick={() => handleApprove(kasbon)}
+                                className="flex items-center space-x-1 px-3 py-1.5 bg-green-50 text-green-600 rounded-lg hover:bg-green-100 transition-colors text-sm font-medium"
+                                title="Approve Manager"
+                              >
+                                <CheckCircle className="w-4 h-4" />
+                                <span>Approve</span>
+                              </button>
+                            )}
+                            {canApproveHead && kasbon.statusApproval === 'Manager Approved' && (
+                              <button
+                                onClick={() => handleApproveHead(kasbon)}
+                                className="flex items-center space-x-1 px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors text-sm font-medium"
+                                title="Approve Head Finance"
+                              >
+                                <CheckCircle className="w-4 h-4" />
+                                <span>Approve HF</span>
+                              </button>
+                            )}
+                            {(canApproveManager || canApproveHead || canManage) && (kasbon.statusApproval === 'Pending' || kasbon.statusApproval === 'Manager Approved') && (
+                              <button
+                                onClick={() => handleReject(kasbon)}
+                                className="flex items-center space-x-1 px-3 py-1.5 bg-orange-50 text-orange-600 rounded-lg hover:bg-orange-100 transition-colors text-sm font-medium"
+                                title="Reject"
+                              >
+                                <XCircle className="w-4 h-4" />
+                                <span>Reject</span>
+                              </button>
                             )}
 
                             {/* Aksi khusus Finance untuk update status transfer */}

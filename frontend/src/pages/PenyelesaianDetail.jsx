@@ -8,6 +8,8 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { useNotification } from '../context/NotificationContext';
 import ConfirmDialog from '../components/ConfirmDialog';
+import ApprovalTimeline from '../components/ApprovalTimeline';
+import { formatTanggalJam, getStatusBadgeClass, STAGE_LABEL } from '../lib/approvalFlow';
 import PasteUpload from '../components/PasteUpload';
 import QLLink from '../components/QLLink';
 import jsPDF from 'jspdf';
@@ -22,7 +24,8 @@ const PenyelesaianDetail = () => {
     const { refreshNotifications } = useNotification();
     // Permission per-user (default mengikuti role, bisa dioverride Administrator)
     const isFinance = hasPermission ? hasPermission('transfer') : userRole === 'team_finance';
-    const canManage = hasPermission ? hasPermission('approve') : ['administrator', 'manager', 'bod'].includes(userRole);
+    const canManagerApprove = penyelesaian?.status_approval === 'Pending' && (hasPermission ? (hasPermission('approve_manager') || hasPermission('approve')) : ['administrator', 'bod', 'manager'].includes(userRole));
+    const canHeadApprove = penyelesaian?.status_approval === 'Manager Approved' && (hasPermission ? (hasPermission('approve_head_finance') || hasPermission('approve')) : ['administrator', 'head_finance'].includes(userRole));
     const canViewConfidential = hasPermission ? hasPermission('view_confidential') : ['administrator', 'bod', 'team_finance', 'hrd'].includes(userRole?.toLowerCase());
     const [penyelesaian, setPenyelesaian] = useState(null);
     const [kasbonId, setKasbonId] = useState(null);
@@ -111,7 +114,9 @@ const PenyelesaianDetail = () => {
             onConfirm: async () => {
                 try {
                     await updateRecord('penyelesaian', penyelesaian.id, {
-                        status_penyelesaian: 'Selesai'
+                        status_penyelesaian: 'Selesai',
+                        completed_at: new Date().toISOString(),
+                        transferred_at: new Date().toISOString()
                     });
 
                     // Log activity
@@ -138,19 +143,22 @@ const PenyelesaianDetail = () => {
         });
     };
 
-    // Handle Approve Penyelesaian
+    // Handle Approve Tahap 1 (Manager): Pending -> Manager Approved
     const handleApprove = () => {
         setConfirmDialog({
             isOpen: true,
             type: 'success',
-            title: 'Konfirmasi Approval',
-            message: `Apakah Anda yakin ingin menyetujui Penyelesaian "${penyelesaian.nomor_penyelesaian}"?`,
+            title: 'Approval Manager (Tahap 1)',
+            message: `Setujui sebagai Manager? Setelah ini diteruskan ke Head Finance.`,
             onConfirm: async () => {
                 try {
+                    const nowIso = new Date().toISOString();
                     await updateRecord('penyelesaian', penyelesaian.id, {
-                        status_approval: 'Approved',
-                        disetujui_oleh: userId || null,
-                        nama_approver: userName || 'Manager'
+                        status_approval: 'Manager Approved',
+                        disetujui_oleh: userName || 'Manager',
+                        nama_approver: userName || 'Manager',
+                        manager_approved_by: userName || 'Manager',
+                        manager_approved_at: nowIso
                     });
                     await logActivity({
                         tableName: 'penyelesaian',
@@ -159,11 +167,50 @@ const PenyelesaianDetail = () => {
                         action: 'approve',
                         fieldChanged: 'status_approval',
                         oldValue: 'Pending',
+                        newValue: 'Manager Approved',
+                        changedBy: userId,
+                        changedByName: userName
+                    });
+                    showToast('Disetujui Manager. Menunggu approval Head Finance.', 'success');
+                    await refetchPenyelesaian();
+                    refreshNotifications();
+                } catch (error) {
+                    console.error('Error approving penyelesaian:', error);
+                    showToast('Gagal menyetujui Penyelesaian', 'error');
+                }
+            }
+        });
+    };
+
+    // Handle Approve Tahap 2 (Head Finance): Manager Approved -> Approved
+    const handleApproveHead = () => {
+        setConfirmDialog({
+            isOpen: true,
+            type: 'success',
+            title: 'Approval Head Finance (Tahap 2)',
+            message: `Setujui sebagai Head Finance? Setelah ini finance dapat menandai Selesai.`,
+            onConfirm: async () => {
+                try {
+                    const nowIso = new Date().toISOString();
+                    await updateRecord('penyelesaian', penyelesaian.id, {
+                        status_approval: 'Approved',
+                        disetujui_oleh: userName || 'Head Finance',
+                        nama_approver: userName || 'Head Finance',
+                        head_finance_approved_by: userName || 'Head Finance',
+                        head_finance_approved_at: nowIso
+                    });
+                    await logActivity({
+                        tableName: 'penyelesaian',
+                        recordId: penyelesaian.id,
+                        recordNumber: penyelesaian.nomor_penyelesaian,
+                        action: 'approve',
+                        fieldChanged: 'status_approval',
+                        oldValue: 'Manager Approved',
                         newValue: 'Approved',
                         changedBy: userId,
                         changedByName: userName
                     });
-                    showToast('Penyelesaian berhasil disetujui', 'success');
+                    showToast('Disetujui Head Finance.', 'success');
                     await refetchPenyelesaian();
                     refreshNotifications();
                 } catch (error) {
@@ -183,10 +230,13 @@ const PenyelesaianDetail = () => {
             message: `Apakah Anda yakin ingin menolak Penyelesaian "${penyelesaian.nomor_penyelesaian}"?`,
             onConfirm: async () => {
                 try {
+                    const nowIso = new Date().toISOString();
                     await updateRecord('penyelesaian', penyelesaian.id, {
                         status_approval: 'Rejected',
-                        disetujui_oleh: userId || null,
-                        nama_approver: userName || 'Manager'
+                        disetujui_oleh: userName || 'Manager',
+                        nama_approver: userName || 'Manager',
+                        rejected_by: userName || 'Manager',
+                        rejected_at: nowIso
                     });
                     await logActivity({
                         tableName: 'penyelesaian',
@@ -194,7 +244,7 @@ const PenyelesaianDetail = () => {
                         recordNumber: penyelesaian.nomor_penyelesaian,
                         action: 'reject',
                         fieldChanged: 'status_approval',
-                        oldValue: 'Pending',
+                        oldValue: penyelesaian.status_approval || 'Pending',
                         newValue: 'Rejected',
                         changedBy: userId,
                         changedByName: userName
@@ -731,10 +781,10 @@ const PenyelesaianDetail = () => {
                                     <p className="text-base font-semibold text-gray-800"><QLLink ql={penyelesaian.nomor_ql} linkClassName="text-amber-600" /></p>
                                 </div>
                                 <div>
-                                    <label className="text-sm text-gray-500">Tanggal</label>
+                                    <label className="text-sm text-gray-500">Tanggal & Jam Pengajuan</label>
                                     <p className="text-base text-gray-800 flex items-center space-x-2">
                                         <Calendar className="w-4 h-4 text-gray-400" />
-                                        <span>{penyelesaian.created_at ? new Date(penyelesaian.created_at).toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) : '-'}</span>
+                                        <span>{penyelesaian.created_at ? formatTanggalJam(penyelesaian.created_at) : '-'}</span>
                                     </p>
                                 </div>
                                 <div>
@@ -870,19 +920,17 @@ const PenyelesaianDetail = () => {
                                 <div>
                                     <label className="text-xs text-gray-500">Status Approval</label>
                                     <div className="mt-1">
-                                        <span className={`inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-semibold ${penyelesaian.status_approval === 'Approved' ? 'bg-green-100 text-green-700' :
-                                            penyelesaian.status_approval === 'Rejected' ? 'bg-red-100 text-red-700' :
-                                                'bg-yellow-100 text-yellow-700'
-                                            }`}>
+                                        <span className={`inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-semibold ${getStatusBadgeClass(penyelesaian.status_approval)}`}>
                                             {penyelesaian.status_approval === 'Approved' && <CheckCircle className="w-4 h-4 mr-1" />}
                                             {penyelesaian.status_approval === 'Rejected' && <XCircle className="w-4 h-4 mr-1" />}
                                             {penyelesaian.status_approval || 'Pending'}
                                         </span>
+                                        <p className="text-[11px] text-gray-500 mt-1">{STAGE_LABEL[penyelesaian.status_approval] || ''}</p>
                                     </div>
                                 </div>
                                 <div>
                                     <label className="text-xs text-gray-500">Disetujui Oleh</label>
-                                    <p className="text-sm font-medium text-gray-800 mt-1">{penyelesaian.nama_approver || '-'}</p>
+                                    <p className="text-sm font-medium text-gray-800 mt-1">{penyelesaian.head_finance_approved_by || penyelesaian.manager_approved_by || penyelesaian.nama_approver || '-'}</p>
                                 </div>
                                 <div>
                                     <label className="text-xs text-gray-500">Status Penyelesaian</label>
@@ -923,15 +971,37 @@ const PenyelesaianDetail = () => {
                                     </div>
                                 )}
 
-                                {/* Tombol Approve/Reject untuk Manager/Admin/BOD */}
-                                {canManage && penyelesaian.status_approval === 'Pending' && (
-                                    <div className="pt-3 border-t border-gray-200 space-y-2">
+                                {/* Approval Tahap 1: Manager */}
+                                {canManagerApprove && (
+                                    <div className="pt-3 border-t border-amber-200 bg-amber-50 -m-1 p-3 rounded-lg space-y-2">
+                                        <p className="text-xs font-semibold text-amber-800">Approval Manager (Tahap 1)</p>
                                         <button
                                             onClick={handleApprove}
                                             className="w-full flex items-center justify-center space-x-2 px-4 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium"
                                         >
                                             <CheckCircle className="w-5 h-5" />
-                                            <span>Approve</span>
+                                            <span>Approve Manager</span>
+                                        </button>
+                                        <button
+                                            onClick={handleReject}
+                                            className="w-full flex items-center justify-center space-x-2 px-4 py-2.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors font-medium"
+                                        >
+                                            <XCircle className="w-5 h-5" />
+                                            <span>Reject</span>
+                                        </button>
+                                    </div>
+                                )}
+
+                                {/* Approval Tahap 2: Head Finance */}
+                                {canHeadApprove && (
+                                    <div className="pt-3 border-t border-indigo-200 bg-indigo-50 -m-1 p-3 rounded-lg space-y-2">
+                                        <p className="text-xs font-semibold text-indigo-800">Approval Head Finance (Tahap 2)</p>
+                                        <button
+                                            onClick={handleApproveHead}
+                                            className="w-full flex items-center justify-center space-x-2 px-4 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-medium"
+                                        >
+                                            <CheckCircle className="w-5 h-5" />
+                                            <span>Approve Head Finance</span>
                                         </button>
                                         <button
                                             onClick={handleReject}
@@ -944,6 +1014,7 @@ const PenyelesaianDetail = () => {
                                 )}
                             </div>
                         </div>
+                        <ApprovalTimeline record={penyelesaian} transferLabel="Selesai Finance" />
                     </div>
                 </div>
             </div>

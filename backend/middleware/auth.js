@@ -64,10 +64,18 @@ const requireFinance = requireRole('administrator', 'team_finance');
 // Middleware for BOD approval
 const requireBOD = requireRole('administrator', 'bod');
 
+// Middleware for manager-stage approval (tahap 1: Pending -> Manager Approved)
+const requireManager = requireRole('administrator', 'bod', 'manager');
+
+// Middleware for head finance final approval (tahap 2: Manager Approved -> Approved)
+const requireHeadFinance = requireRole('administrator', 'head_finance');
+
 module.exports = {
     authenticateToken,
     requireRole,
     requireAdmin,
     requireFinance,
-    requireBOD
+    requireBOD,
+    requireManager,
+    requireHeadFinance
 };

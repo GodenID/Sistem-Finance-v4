@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { getAllRecords, getLightweightRows } from '../lib/api';
+import { formatTanggalJamPendek, calcDurations } from '../lib/approvalFlow';
 import { TIPE_OPTIONS, ID_PERUSAHAAN_OPTIONS, getTipeOptionsByRole, getIdPerusahaanOptionsByRole } from '../constants/companyTypes';
 // NOTE (FIX #5): xlsx dimuat dinamis di handleExportExcel agar tidak masuk bundle awal.
 import {
@@ -798,29 +799,38 @@ const Laporan = () => {
       const prData = [
         ['DETAIL PAYMENT REQUEST'],
         [''],
-        ['No PR', 'No QL', 'Tanggal', 'Tipe', 'Karyawan', 'Metode', 'Tujuan Pembayaran', 'Nominal', 'Status Approval', 'Disetujui Oleh', 'Status Transfer'],
-        ...filteredData.paymentRequests.map(pr => [
+        ['No PR', 'No QL', 'Tanggal & Jam Pengajuan', 'Tipe', 'Karyawan', 'Metode', 'Tujuan Pembayaran', 'Nominal', 'Status Approval', 'Disetujui Oleh', 'Status Transfer', 'Approve Manager Pada', 'Durasi Manager', 'Approve Head Finance Pada', 'Durasi Head Finance', 'Transfer Pada', 'Durasi Transfer'],
+        ...filteredData.paymentRequests.map(pr => {
+          const dd = calcDurations(pr);
+          return [
           pr.nomor_pr || '-',
           pr.nomor_ql || '-',
-          pr.created_at ? new Date(pr.created_at).toLocaleDateString('id-ID') : '-',
+          pr.created_at ? formatTanggalJamPendek(pr.created_at) : '-',
           pr.tipe || '-',
           pr.nama_karyawan || '-',
           pr.metode_pembayaran || 'Transfer Rekening',
           getPaymentDestination(pr),
           formatRupiah(pr.nominal || 0),
           pr.status_approval || 'Pending',
-          pr.disetujui_oleh || '-',
-          pr.status_transfer || 'Belum Transfer'
-        ]),
+          pr.head_finance_approved_by || pr.manager_approved_by || pr.disetujui_oleh || '-',
+          pr.status_transfer || 'Belum Transfer',
+          pr.manager_approved_at ? formatTanggalJamPendek(pr.manager_approved_at) : '-',
+          dd.manager,
+          pr.head_finance_approved_at ? formatTanggalJamPendek(pr.head_finance_approved_at) : '-',
+          dd.headFinance,
+          pr.transferred_at ? formatTanggalJamPendek(pr.transferred_at) : '-',
+          dd.transfer
+          ];
+        }),
         [''],
-        ['TOTAL', '', '', '', '', '', '', formatRupiah(filteredData.paymentRequests.reduce((sum, pr) => sum + (parseFloat(pr.nominal) || 0), 0)), '', '', '']
+        ['TOTAL', '', '', '', '', '', '', formatRupiah(filteredData.paymentRequests.reduce((sum, pr) => sum + (parseFloat(pr.nominal) || 0), 0)), '', '', '', '', '', '', '', '', '']
       ];
 
       const ws_pr = XLSX.utils.aoa_to_sheet(prData);
       ws_pr['!cols'] = [
         { wch: 12 },
         { wch: 12 },
-        { wch: 12 },
+        { wch: 18 },
         { wch: 18 },
         { wch: 18 },
         { wch: 18 },
@@ -828,7 +838,13 @@ const Laporan = () => {
         { wch: 18 },
         { wch: 15 },
         { wch: 18 },
-        { wch: 15 }
+        { wch: 15 },
+        { wch: 18 },
+        { wch: 14 },
+        { wch: 18 },
+        { wch: 14 },
+        { wch: 18 },
+        { wch: 14 }
       ];
 
       XLSX.utils.book_append_sheet(wb, ws_pr, 'Payment Request');
@@ -837,20 +853,30 @@ const Laporan = () => {
       const kasbonData = [
         ['DETAIL KASBON'],
         [''],
-        ['No Kasbon', 'No QL', 'Tanggal', 'Tipe', 'Karyawan', 'Nominal', 'Metode Pembayaran', 'Status Approval', 'Status Transfer'],
-        ...filteredData.kasbon.map(kb => [
+        ['No Kasbon', 'No QL', 'Tanggal & Jam Pengajuan', 'Tipe', 'Karyawan', 'Nominal', 'Metode Pembayaran', 'Status Approval', 'Disetujui Oleh', 'Status Transfer', 'Approve Manager Pada', 'Durasi Manager', 'Approve Head Finance Pada', 'Durasi Head Finance', 'Transfer Pada', 'Durasi Transfer'],
+        ...filteredData.kasbon.map(kb => {
+          const dd = calcDurations(kb);
+          return [
           kb.nomor_kasbon || '-',
           kb.nomor_ql || '-',
-          kb.created_at ? new Date(kb.created_at).toLocaleDateString('id-ID') : '-',
+          kb.created_at ? formatTanggalJamPendek(kb.created_at) : '-',
           kb.tipe || '-',
           kb.nama_karyawan || '-',
           formatRupiah(kb.nominal || 0),
           kb.metode_pembayaran || '-',
           kb.status_approval || 'Pending',
-          kb.status_transfer || 'Belum Transfer'
-        ]),
+          kb.head_finance_approved_by || kb.manager_approved_by || kb.nama_approver || '-',
+          kb.status_transfer || 'Belum Transfer',
+          kb.manager_approved_at ? formatTanggalJamPendek(kb.manager_approved_at) : '-',
+          dd.manager,
+          kb.head_finance_approved_at ? formatTanggalJamPendek(kb.head_finance_approved_at) : '-',
+          dd.headFinance,
+          kb.transferred_at ? formatTanggalJamPendek(kb.transferred_at) : '-',
+          dd.transfer
+          ];
+        }),
         [''],
-        ['TOTAL', '', '', '', '', formatRupiah(filteredData.kasbon.reduce((sum, kb) => sum + (parseFloat(kb.nominal) || 0), 0)), '', '', '']
+        ['TOTAL', '', '', '', '', formatRupiah(filteredData.kasbon.reduce((sum, kb) => sum + (parseFloat(kb.nominal) || 0), 0)), '', '', '', '', '', '', '', '', '', '']
       ];
 
       const ws_kasbon = XLSX.utils.aoa_to_sheet(kasbonData);
@@ -872,20 +898,30 @@ const Laporan = () => {
       const klaimData = [
         ['DETAIL KLAIM'],
         [''],
-        ['No Klaim', 'No QL', 'Tanggal', 'Tipe', 'Karyawan', 'Nominal', 'Metode Pembayaran', 'Status Approval', 'Status Transfer'],
-        ...filteredData.klaim.map(kl => [
+        ['No Klaim', 'No QL', 'Tanggal & Jam Pengajuan', 'Tipe', 'Karyawan', 'Nominal', 'Metode Pembayaran', 'Status Approval', 'Disetujui Oleh', 'Status Transfer', 'Approve Manager Pada', 'Durasi Manager', 'Approve Head Finance Pada', 'Durasi Head Finance', 'Transfer Pada', 'Durasi Transfer'],
+        ...filteredData.klaim.map(kl => {
+          const dd = calcDurations(kl);
+          return [
           kl.nomor_klaim || '-',
           kl.nomor_ql || '-',
-          kl.created_at ? new Date(kl.created_at).toLocaleDateString('id-ID') : '-',
+          kl.created_at ? formatTanggalJamPendek(kl.created_at) : '-',
           kl.tipe || '-',
           kl.nama_karyawan || '-',
           formatRupiah(kl.nominal || 0),
           kl.metode_pembayaran || '-',
           kl.status_approval || 'Pending',
-          kl.status_transfer || 'Belum Transfer'
-        ]),
+          kl.head_finance_approved_by || kl.manager_approved_by || kl.nama_approver || '-',
+          kl.status_transfer || 'Belum Transfer',
+          kl.manager_approved_at ? formatTanggalJamPendek(kl.manager_approved_at) : '-',
+          dd.manager,
+          kl.head_finance_approved_at ? formatTanggalJamPendek(kl.head_finance_approved_at) : '-',
+          dd.headFinance,
+          kl.transferred_at ? formatTanggalJamPendek(kl.transferred_at) : '-',
+          dd.transfer
+          ];
+        }),
         [''],
-        ['TOTAL', '', '', '', '', formatRupiah(filteredData.klaim.reduce((sum, kl) => sum + (parseFloat(kl.nominal) || 0), 0)), '', '', '']
+        ['TOTAL', '', '', '', '', formatRupiah(filteredData.klaim.reduce((sum, kl) => sum + (parseFloat(kl.nominal) || 0), 0)), '', '', '', '', '', '', '', '', '', '']
       ];
 
       const ws_klaim = XLSX.utils.aoa_to_sheet(klaimData);
@@ -907,24 +943,32 @@ const Laporan = () => {
       const penyelesaianData = [
         ['DETAIL PENYELESAIAN'],
         [''],
-        ['No Penyelesaian', 'No Kasbon', 'No QL', 'Tanggal', 'Karyawan', 'Nominal Kasbon', 'Total Terpakai', 'Selisih', 'Status'],
-        ...filteredData.penyelesaian.map(p => [
+        ['No Penyelesaian', 'No Kasbon', 'No QL', 'Tanggal & Jam Pengajuan', 'Karyawan', 'Nominal Kasbon', 'Total Terpakai', 'Selisih', 'Status', 'Status Approval', 'Approve Manager Pada', 'Durasi Manager', 'Approve Head Finance Pada', 'Durasi Head Finance'],
+        ...filteredData.penyelesaian.map(p => {
+          const dd = calcDurations(p);
+          return [
           p.nomor_penyelesaian || '-',
           p.nomor_kasbon || '-',
           p.nomor_ql || '-',
-          p.created_at ? new Date(p.created_at).toLocaleDateString('id-ID') : '-',
+          p.created_at ? formatTanggalJamPendek(p.created_at) : '-',
           p.nama_karyawan || '-',
           formatRupiah(p.kasbon_nominal || 0),
           formatRupiah(p.total_terpakai || 0),
           formatRupiah(p.selisih || 0),
-          p.status_selisih || '-'
-        ]),
+          p.status_selisih || '-',
+          p.status_approval || 'Pending',
+          p.manager_approved_at ? formatTanggalJamPendek(p.manager_approved_at) : '-',
+          dd.manager,
+          p.head_finance_approved_at ? formatTanggalJamPendek(p.head_finance_approved_at) : '-',
+          dd.headFinance
+          ];
+        }),
         [''],
         ['TOTAL', '', '', '', '',
           formatRupiah(filteredData.penyelesaian.reduce((sum, p) => sum + (parseFloat(p.kasbon_nominal) || 0), 0)),
           formatRupiah(filteredData.penyelesaian.reduce((sum, p) => sum + (parseFloat(p.total_terpakai) || 0), 0)),
           formatRupiah(filteredData.penyelesaian.reduce((sum, p) => sum + (parseFloat(p.selisih) || 0), 0)),
-          ''
+          '', '', '', '', '', ''
         ]
       ];
 

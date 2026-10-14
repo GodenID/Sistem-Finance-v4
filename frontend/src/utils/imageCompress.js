@@ -19,7 +19,10 @@ export async function compressImage(file, options = {}) {
         maxWidth = 1600,
         maxHeight = 1600,
         quality = 0.75,
-        maxSizeKB = 500
+        maxSizeKB = 500,
+        // Batas waktu kompresi — cegah promise hang selamanya yang bikin
+        // upload ngestuck (mis. gambar korup / format tak didukung browser).
+        timeoutMs = 15000,
     } = options;
 
     const originalSize = file.size;
@@ -45,6 +48,35 @@ export async function compressImage(file, options = {}) {
     }
 
     return new Promise((resolve, reject) => {
+        let settled = false;
+        const objectUrl = URL.createObjectURL(file);
+
+        const cleanup = () => {
+            try { URL.revokeObjectURL(objectUrl); } catch { /* abaikan */ }
+        };
+
+        const settleResolve = (value) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            cleanup();
+            resolve(value);
+        };
+
+        const settleReject = (err) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            cleanup();
+            reject(err);
+        };
+
+        // Timeout: jangan biarkan kompresi menggantung selamanya.
+        // Caller (r2Upload) akan fallback ke file original bila ini gagal.
+        const timer = setTimeout(() => {
+            settleReject(new Error('Kompresi gambar timeout — file mungkin korup atau format tidak didukung'));
+        }, timeoutMs);
+
         const img = new Image();
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
@@ -69,11 +101,22 @@ export async function compressImage(file, options = {}) {
                 ctx.fillRect(0, 0, width, height);
                 ctx.drawImage(img, 0, 0, width, height);
 
+                // Guard: toBlob kadang tidak memanggil callback (canvas tainted / OOM).
+                // Beri timeout sendiri agar tidak hang.
+                let blobCalled = false;
+                const blobTimer = setTimeout(() => {
+                    if (!blobCalled) {
+                        settleReject(new Error('Kompresi gambar gagal (canvas timeout)'));
+                    }
+                }, 10000);
+
                 // Convert to JPEG blob
                 canvas.toBlob(
                     (blob) => {
+                        blobCalled = true;
+                        clearTimeout(blobTimer);
                         if (!blob) {
-                            reject(new Error('Failed to compress image'));
+                            settleReject(new Error('Failed to compress image'));
                             return;
                         }
 
@@ -86,7 +129,7 @@ export async function compressImage(file, options = {}) {
 
                         console.log(`🗜️ Image compressed: ${formatBytes(originalSize)} → ${formatBytes(blob.size)} (${Math.round((1 - blob.size / originalSize) * 100)}% reduced)`);
 
-                        resolve({
+                        settleResolve({
                             file: compressedFile,
                             originalSize,
                             compressedSize: blob.size,
@@ -97,16 +140,16 @@ export async function compressImage(file, options = {}) {
                     quality
                 );
             } catch (error) {
-                reject(error);
+                settleReject(error);
             }
         };
 
         img.onerror = () => {
-            reject(new Error('Failed to load image for compression'));
+            settleReject(new Error('Failed to load image for compression'));
         };
 
         // Load image from file
-        img.src = URL.createObjectURL(file);
+        img.src = objectUrl;
     });
 }
 

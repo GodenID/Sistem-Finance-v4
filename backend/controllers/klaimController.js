@@ -151,29 +151,89 @@ const update = async (req, res) => {
     }
 };
 
-// Update approval status
+// Update approval status (3 tahap: Pending -> Manager Approved -> Approved -> transfer)
 const updateApproval = async (req, res) => {
     try {
         const { id } = req.params;
         const { status_approval } = req.body;
 
-        if (!['Pending', 'Approved', 'Rejected'].includes(status_approval)) {
+        if (!['Pending', 'Manager Approved', 'Approved', 'Rejected'].includes(status_approval)) {
             return res.status(400).json({ error: 'Status approval tidak valid' });
         }
 
-        const result = await db.query(
-            `UPDATE klaim 
+        const approverName = req.user.name || req.user.username || req.user.id;
+
+        const current = await db.query('SELECT * FROM klaim WHERE id = $1', [id]);
+        if (current.rows.length === 0) {
+            return res.status(404).json({ error: 'Klaim tidak ditemukan' });
+        }
+        const row = current.rows[0];
+
+        if (status_approval === 'Manager Approved' && row.status_approval !== 'Pending') {
+            return res.status(400).json({ error: 'Hanya record Pending yang dapat di-Manager Approved' });
+        }
+        if (status_approval === 'Approved' && !['Pending', 'Manager Approved'].includes(row.status_approval)) {
+            return res.status(400).json({ error: 'Hanya record Pending/Manager Approved yang dapat di-Approved' });
+        }
+        if (status_approval === 'Rejected' && !['Pending', 'Manager Approved'].includes(row.status_approval)) {
+            return res.status(400).json({ error: 'Hanya record Pending/Manager Approved yang dapat di-Rejected' });
+        }
+
+        try {
+            let result;
+            if (status_approval === 'Manager Approved') {
+                result = await db.query(
+                    `UPDATE klaim
+       SET status_approval = $1, disetujui_oleh = $2, manager_approved_by = $3, manager_approved_at = NOW(), updated_at = NOW()
+       WHERE id = $4
+       RETURNING *`,
+                    [status_approval, req.user.id, approverName, id]
+                );
+            } else if (status_approval === 'Approved') {
+                const mgrBy = row.manager_approved_by || approverName;
+                const mgrAt = row.manager_approved_at || row.updated_at || row.created_at;
+                result = await db.query(
+                    `UPDATE klaim
+       SET status_approval = $1, disetujui_oleh = $2, head_finance_approved_by = $3, head_finance_approved_at = NOW(),
+           manager_approved_by = COALESCE(manager_approved_by, $4), manager_approved_at = COALESCE(manager_approved_at, $5),
+           updated_at = NOW()
+       WHERE id = $6
+       RETURNING *`,
+                    [status_approval, req.user.id, approverName, mgrBy, mgrAt, id]
+                );
+            } else if (status_approval === 'Rejected') {
+                result = await db.query(
+                    `UPDATE klaim
+       SET status_approval = $1, disetujui_oleh = $2, rejected_by = $3, rejected_at = NOW(), updated_at = NOW()
+       WHERE id = $4
+       RETURNING *`,
+                    [status_approval, req.user.id, approverName, id]
+                );
+            } else {
+                result = await db.query(
+                    `UPDATE klaim
        SET status_approval = $1, disetujui_oleh = $2, updated_at = NOW()
        WHERE id = $3
        RETURNING *`,
-            [status_approval, req.user.id, id]
-        );
-
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Klaim tidak ditemukan' });
+                    [status_approval, req.user.id, id]
+                );
+            }
+            return res.json(result.rows[0]);
+        } catch (e) {
+            // Fallback legacy bila kolom SLA baru belum ada (migrasi belum jalan).
+            // disetujui_oleh bertipe UUID -> simpan req.user.id agar tidak melanggar FK.
+            if (e && e.code === '42703') {
+                const fallback = await db.query(
+                    `UPDATE klaim
+       SET status_approval = $1, disetujui_oleh = $2, updated_at = NOW()
+       WHERE id = $3
+       RETURNING *`,
+                    [status_approval, req.user.id, id]
+                );
+                return res.json(fallback.rows[0]);
+            }
+            throw e;
         }
-
-        res.json(result.rows[0]);
     } catch (error) {
         console.error('Update approval error:', error);
         res.status(500).json({ error: 'Internal server error' });
@@ -190,19 +250,41 @@ const updateTransfer = async (req, res) => {
             return res.status(400).json({ error: 'Status transfer tidak valid' });
         }
 
-        const result = await db.query(
-            `UPDATE klaim 
+        try {
+            const result = await db.query(
+                `UPDATE klaim
+       SET status_transfer = $1, bukti_transfer = $2,
+           transferred_at = CASE WHEN $1 = 'Sudah Transfer' THEN NOW() ELSE transferred_at END,
+           updated_at = NOW()
+       WHERE id = $3
+       RETURNING *`,
+                [status_transfer, bukti_transfer, id]
+            );
+
+            if (result.rows.length === 0) {
+                return res.status(404).json({ error: 'Klaim tidak ditemukan' });
+            }
+
+            return res.json(result.rows[0]);
+        } catch (e) {
+            // Fallback legacy bila kolom transferred_at belum ada
+            if (e && e.code === '42703') {
+                const fallback = await db.query(
+                    `UPDATE klaim
        SET status_transfer = $1, bukti_transfer = $2, updated_at = NOW()
        WHERE id = $3
        RETURNING *`,
-            [status_transfer, bukti_transfer, id]
-        );
+                    [status_transfer, bukti_transfer, id]
+                );
 
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Klaim tidak ditemukan' });
+                if (fallback.rows.length === 0) {
+                    return res.status(404).json({ error: 'Klaim tidak ditemukan' });
+                }
+
+                return res.json(fallback.rows[0]);
+            }
+            throw e;
         }
-
-        res.json(result.rows[0]);
     } catch (error) {
         console.error('Update transfer error:', error);
         res.status(500).json({ error: 'Internal server error' });

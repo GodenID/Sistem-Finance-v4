@@ -20,6 +20,7 @@ import MultiFileUpload from '../components/MultiFileUpload';
 import { useRealtimeSubscription } from '../hooks/useRealtimeSubscription';
 import { generateKlaimNumber } from '../utils/generateUniqueNumber';
 import { sendTransferNotification } from '../lib/emailNotifications';
+import { formatTanggalJamPendek, getStatusBadgeClass, calcDurations } from '../lib/approvalFlow';
 
 
 const Klaim = () => {
@@ -31,6 +32,8 @@ const Klaim = () => {
   // Permission per-user (default mengikuti role, bisa dioverride Administrator dari halaman Karyawan)
   const isFinance = hasPermission ? hasPermission('transfer') : userRole === 'team_finance';
   const canManage = hasPermission ? hasPermission('approve') : ['administrator', 'manager', 'bod'].includes(userRole);
+  const canApproveManager = hasPermission ? (hasPermission('approve_manager') || hasPermission('approve')) : ['administrator', 'manager', 'bod'].includes(userRole);
+  const canApproveHead = hasPermission ? (hasPermission('approve_head_finance') || hasPermission('approve')) : ['administrator', 'head_finance'].includes(userRole);
   const isAdmin = userRole?.toLowerCase() === 'administrator';
   const canEditDelete = hasPermission ? hasPermission('edit_klaim') : ['administrator', 'bod', 'team_finance'].includes(userRole?.toLowerCase());
   // Only Admin & BOD can delete
@@ -168,11 +171,21 @@ const Klaim = () => {
       nomorQl: item.nomor_ql || '',
       namaEvent: item.nama_event || '',
       tanggal: item.created_at ? new Date(item.created_at).toISOString().split('T')[0] : '',
+      tanggalJam: formatTanggalJamPendek(item.created_at),
+      manager_approved_at: item.manager_approved_at || null,
+      manager_approved_by: item.manager_approved_by || null,
+      head_finance_approved_at: item.head_finance_approved_at || null,
+      head_finance_approved_by: item.head_finance_approved_by || null,
+      transferred_at: item.transferred_at || null,
+      completed_at: item.completed_at || null,
+      rejected_at: item.rejected_at || null,
+      rejected_by: item.rejected_by || null,
       tipe: item.tipe || '',
       idPerusahaan: item.id_perusahaan || '',
       nominal: parseFloat(item.nominal) || 0,
       statusApproval: item.status_approval || 'Pending',
       disetujuiOleh: item.nama_approver || '-',
+      disetujuiHeadFinance: item.head_finance_approved_by || '-',
       statusTransfer: item.status_transfer || 'Belum Transfer',
       keterangan: item.keterangan || '',
       lampiran: item.lampiran || null,
@@ -277,10 +290,11 @@ const Klaim = () => {
   const getStatusApprovalBadge = (status) => {
     const badges = {
       'Pending': 'bg-amber-50 text-amber-700',
+      'Manager Approved': 'bg-blue-50 text-blue-700',
       'Approved': 'bg-emerald-50 text-emerald-700',
       'Rejected': 'bg-rose-50 text-rose-700',
     };
-    return <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold ${badges[status]}`}>{status}</span>;
+    return <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold ${badges[status] || 'bg-gray-100 text-gray-700'}`}>{status}</span>;
   };
 
   const getStatusTransferBadge = (status) => {
@@ -368,13 +382,24 @@ const Klaim = () => {
           setFileUploadProgress({ ...newProgress });
         }, 100);
 
-        const result = await uploadFile(file, 'klaim', nomorKlaim, userName);
+        try {
+          const result = await uploadFile(file, 'klaim', nomorKlaim, userName);
 
-        clearInterval(progressInterval);
-        newProgress[file.name] = 100;
-        setFileUploadProgress({ ...newProgress });
+          newProgress[file.name] = 100;
+          setFileUploadProgress({ ...newProgress });
 
-        uploadedUrls.push(result.url);
+          uploadedUrls.push(result.url);
+        } catch (fileError) {
+          // Tandai file yang gagal agar user tahu file mana yang bermasalah,
+          // lalu batalkan dengan pesan yang jelas (tidak ngestuck diam-diam)
+          newProgress[file.name] = 0;
+          setFileUploadProgress({ ...newProgress });
+          throw new Error(`Upload "${file.name}" gagal: ${fileError?.message || 'Silakan coba lagi'}`);
+        } finally {
+          // WAJIB clear — sebelumnya interval bocor saat upload gagal
+          // sehingga progress jalan terus & tombol stuck
+          clearInterval(progressInterval);
+        }
       }
       return uploadedUrls;
     } catch (error) {
@@ -569,6 +594,10 @@ const Klaim = () => {
           status_transfer: 'Belum Transfer',
           disetujui_oleh: isBOD ? userId : null,
           nama_approver: isBOD ? userName : null,
+          manager_approved_by: isBOD ? userName : null,
+          manager_approved_at: isBOD ? new Date().toISOString() : null,
+          head_finance_approved_by: isBOD ? userName : null,
+          head_finance_approved_at: isBOD ? new Date().toISOString() : null,
           nama_karyawan: namaKaryawanValue,
           is_confidential: isBOD || isHRD,
         };
@@ -779,21 +808,23 @@ const Klaim = () => {
     });
   };
 
-  // Handle Approve Klaim
+  // Handle Approve Klaim Tahap 1 (Manager): Pending -> Manager Approved
   const handleApprove = (klaim) => {
     setConfirmDialog({
       isOpen: true,
       type: 'success',
-      title: 'Konfirmasi Approval',
-      message: `Apakah Anda yakin ingin menyetujui Klaim "${klaim.nomorKlaim}"? Tindakan ini akan mengubah status menjadi Approved.`,
+      title: 'Approval Manager (Tahap 1)',
+      message: `Setujui sebagai Manager? "${klaim.nomorKlaim}" akan diteruskan ke Head Finance.`,
       onConfirm: async () => {
         try {
+          const nowIso = new Date().toISOString();
           await updateRecord('klaim', klaim.id, {
-            status_approval: 'Approved',
+            status_approval: 'Manager Approved',
             disetujui_oleh: userId || null,
-            nama_approver: userName || 'Manager'
+            nama_approver: userName || 'Manager',
+            manager_approved_by: userName || 'Manager',
+            manager_approved_at: nowIso
           });
-          // Log activity
           await logActivity({
             tableName: 'klaim',
             recordId: klaim.id,
@@ -801,11 +832,50 @@ const Klaim = () => {
             action: 'approve',
             fieldChanged: 'status_approval',
             oldValue: 'Pending',
+            newValue: 'Manager Approved',
+            changedBy: userId,
+            changedByName: userName
+          });
+          showToast('Disetujui Manager. Menunggu approval Head Finance.', 'success');
+          await refreshData();
+          refreshNotifications();
+        } catch (error) {
+          console.error('Error approving klaim:', error);
+          showToast('Gagal menyetujui Klaim', 'error');
+        }
+      }
+    });
+  };
+
+  // Handle Approve Klaim Tahap 2 (Head Finance): Manager Approved -> Approved
+  const handleApproveHead = (klaim) => {
+    setConfirmDialog({
+      isOpen: true,
+      type: 'success',
+      title: 'Approval Head Finance (Tahap 2)',
+      message: `Setujui sebagai Head Finance? "${klaim.nomorKlaim}" akan siap transfer oleh Finance.`,
+      onConfirm: async () => {
+        try {
+          const nowIso = new Date().toISOString();
+          await updateRecord('klaim', klaim.id, {
+            status_approval: 'Approved',
+            disetujui_oleh: userId || null,
+            nama_approver: userName || 'Head Finance',
+            head_finance_approved_by: userName || 'Head Finance',
+            head_finance_approved_at: nowIso
+          });
+          await logActivity({
+            tableName: 'klaim',
+            recordId: klaim.id,
+            recordNumber: klaim.nomorKlaim,
+            action: 'approve',
+            fieldChanged: 'status_approval',
+            oldValue: 'Manager Approved',
             newValue: 'Approved',
             changedBy: userId,
             changedByName: userName
           });
-          showToast('Klaim berhasil disetujui', 'success');
+          showToast('Disetujui Head Finance. Siap transfer oleh Finance.', 'success');
           await refreshData();
           refreshNotifications();
         } catch (error) {
@@ -825,10 +895,13 @@ const Klaim = () => {
       message: `Apakah Anda yakin ingin menolak Klaim "${klaim.nomorKlaim}"? Tindakan ini akan mengubah status menjadi Rejected.`,
       onConfirm: async () => {
         try {
+          const nowIso = new Date().toISOString();
           await updateRecord('klaim', klaim.id, {
             status_approval: 'Rejected',
             disetujui_oleh: userId || null,
-            nama_approver: userName || 'Manager'
+            nama_approver: userName || 'Manager',
+            rejected_by: userName || 'Manager',
+            rejected_at: nowIso
           });
           // Log activity
           await logActivity({
@@ -837,7 +910,7 @@ const Klaim = () => {
             recordNumber: klaim.nomorKlaim,
             action: 'reject',
             fieldChanged: 'status_approval',
-            oldValue: 'Pending',
+            oldValue: klaim.statusApproval || 'Pending',
             newValue: 'Rejected',
             changedBy: userId,
             changedByName: userName
@@ -1241,6 +1314,7 @@ const Klaim = () => {
                     <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Keterangan</th>
                     <th className="text-center py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Status Approval</th>
                     <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Disetujui Oleh</th>
+                    <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Disetujui Head Finance</th>
                     <th className="text-center py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Status Transfer</th>
                     <th className="text-center py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Bukti Transfer</th>
                     <th className="text-center py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Aksi</th>
@@ -1287,7 +1361,10 @@ const Klaim = () => {
                             <span className="text-sm text-gray-700">{isHidden ? 'CONFIDENTIAL' : (klaim.namaEvent || '-')}</span>
                           </td>
                           <td className="py-4 px-6">
-                            <span className="text-sm text-gray-600">{klaim.tanggal}</span>
+                            <div className="text-sm text-gray-600 whitespace-nowrap">{klaim.tanggal}</div>
+                            {klaim.tanggalJam && klaim.tanggalJam !== '-' && (
+                              <div className="text-xs text-gray-400 whitespace-nowrap">{klaim.tanggalJam.split(' ')[1] || ''}</div>
+                            )}
                           </td>
                           <td className="py-4 px-6">
                             {isHidden ? <span className="text-sm text-gray-400">CONFIDENTIAL</span> : <TipeBadge tipe={klaim.tipe} size="sm" />}
@@ -1371,6 +1448,9 @@ const Klaim = () => {
                           <td className="py-4 px-6">
                             <span className="text-sm text-gray-700">{klaim.disetujuiOleh}</span>
                           </td>
+                          <td className="py-4 px-6">
+                            <span className="text-sm text-gray-700">{klaim.disetujuiHeadFinance || '-'}</span>
+                          </td>
                           <td className="py-4 px-6 text-center">
                             {getStatusTransferBadge(klaim.statusTransfer)}
                           </td>
@@ -1402,16 +1482,38 @@ const Klaim = () => {
                                 <span>Detail</span>
                               </button>
 
-                              {/* Aksi Approve/Reject untuk Manager/Admin/BOD */}
-                              {canManage && klaim.statusApproval === 'Pending' && (
+                              {/* Approve Tahap 1 (Manager): Pending -> Manager Approved */}
+                              {canApproveManager && klaim.statusApproval === 'Pending' && (
                                 <>
                                   <button
                                     onClick={() => handleApprove(klaim)}
                                     className="flex items-center space-x-1 px-3 py-1.5 bg-green-50 text-green-600 rounded-lg hover:bg-green-100 transition-colors text-sm font-medium"
-                                    title="Approve"
+                                    title="Approve Manager"
                                   >
                                     <CheckCircle className="w-4 h-4" />
                                     <span>Approve</span>
+                                  </button>
+                                  <button
+                                    onClick={() => handleReject(klaim)}
+                                    className="flex items-center space-x-1 px-3 py-1.5 bg-orange-50 text-orange-600 rounded-lg hover:bg-orange-100 transition-colors text-sm font-medium"
+                                    title="Reject"
+                                  >
+                                    <XCircle className="w-4 h-4" />
+                                    <span>Reject</span>
+                                  </button>
+                                </>
+                              )}
+
+                              {/* Approve Tahap 2 (Head Finance): Manager Approved -> Approved */}
+                              {canApproveHead && klaim.statusApproval === 'Manager Approved' && (
+                                <>
+                                  <button
+                                    onClick={() => handleApproveHead(klaim)}
+                                    className="flex items-center space-x-1 px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors text-sm font-medium"
+                                    title="Approve Head Finance"
+                                  >
+                                    <CheckCircle className="w-4 h-4" />
+                                    <span>Approve HF</span>
                                   </button>
                                   <button
                                     onClick={() => handleReject(klaim)}
@@ -1476,7 +1578,7 @@ const Klaim = () => {
                     })
                   ) : (
                     <tr>
-                      <td colSpan={canEditDelete ? "17" : "16"} className="py-12 text-center">
+                      <td colSpan={canEditDelete ? "18" : "17"} className="py-12 text-center">
                         <div className="flex flex-col items-center justify-center space-y-3">
                           <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center">
                             <Search className="w-8 h-8 text-gray-400" />

@@ -107,9 +107,15 @@ export async function listR2Objects({ prefix = '', cursor = null, limit = 500 } 
  * @param {string} documentType - Jenis dokumen (payment-requests, klaim, penyelesaian, kasbon)
  * @param {string} documentId - ID dokumen (optional, e.g., 'PR-0001', 'KLM-0001')
  * @param {string} userName - Nama user yang upload (optional)
+ * @param {object} opts - Opsi tambahan: { timeoutMs } (default 90000)
  * @returns {Promise<{url: string, filePath: string, fileName: string, size: number, type: string, originalSize?: number, wasCompressed?: boolean}>}
  */
-export async function uploadFileToR2(file, documentType = 'uploads', documentId = null, userName = null) {
+export async function uploadFileToR2(file, documentType = 'uploads', documentId = null, userName = null, opts = {}) {
+  // Dukungan pemanggilan lama: argumen ke-5 bisa berupa angka timeout langsung
+  const timeoutMs = typeof opts === 'number' ? opts : (opts?.timeoutMs ?? 90000);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
     // Check if Worker URL is configured
     if (!WORKER_URL || WORKER_URL.includes('your-account')) {
@@ -123,21 +129,26 @@ export async function uploadFileToR2(file, documentType = 'uploads', documentId 
       throw new Error('File terlalu besar. Maksimal 10MB');
     }
 
-    // Validate file type
+    // Validate file type (fallback ke ekstensi bila MIME kosong —
+    // beberapa file dari WA / screenshot paste punya type === '')
     const allowedTypes = [
       'application/pdf',
       'image/jpeg',
-      'image/jpg',
       'image/png',
       'image/gif',
+      'image/webp',
       'application/msword',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       'application/vnd.ms-excel',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     ];
+    const allowedExtensions = ['pdf', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'doc', 'docx', 'xls', 'xlsx'];
 
-    if (!allowedTypes.includes(file.type)) {
-      throw new Error('File type not allowed. Allowed types: PDF, Images, Word, Excel');
+    const ext = (file.name?.split('.').pop() || '').toLowerCase();
+    const typeOk = file.type ? allowedTypes.includes(file.type) : false;
+    const extOk = allowedExtensions.includes(ext);
+    if (!typeOk && !extOk) {
+      throw new Error('File type not allowed. Allowed types: PDF, Images (JPG/PNG/GIF/WebP), Word, Excel');
     }
 
     // Auto-compress images before upload
@@ -180,11 +191,13 @@ export async function uploadFileToR2(file, documentType = 'uploads', documentId 
     }
 
 
-    // Upload file via worker
+    // Upload file via worker (dengan timeout agar tidak ngestuck selamanya)
     const response = await fetch(WORKER_URL, {
       method: 'POST',
       body: formData,
+      signal: controller.signal,
     });
+    clearTimeout(timer);
 
     if (!response.ok) {
       // Try to get error message from response
@@ -237,7 +250,16 @@ export async function uploadFileToR2(file, documentType = 'uploads', documentId 
       wasCompressed: compressionInfo.wasCompressed,
     };
   } catch (error) {
+    clearTimeout(timer);
     console.error('❌ Error uploading file to R2:', error);
+
+    // Timeout: fetch di-abort — jangan biarkan user menunggu tanpa kepastian
+    if (error?.name === 'AbortError') {
+      throw new Error(
+        `Upload timeout (${Math.round(timeoutMs / 1000)} detik): "${file?.name || 'file'}". ` +
+        `Kemungkinan koneksi lambat atau file besar. Coba lagi dengan file lebih kecil / koneksi lebih stabil.`
+      );
+    }
 
     // Provide more helpful error message
     if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {

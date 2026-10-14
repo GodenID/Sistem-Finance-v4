@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const paymentRequestController = require('../controllers/paymentRequestController');
-const { authenticateToken, requireFinance, requireBOD, requireAdmin } = require('../middleware/auth');
+const { authenticateToken, requireRole, requireFinance, requireBOD, requireAdmin } = require('../middleware/auth');
 
 // All routes require authentication
 router.use(authenticateToken);
@@ -18,8 +18,8 @@ router.post('/', paymentRequestController.create);
 // PUT update payment request
 router.put('/:id', paymentRequestController.update);
 
-// PATCH update approval status (BOD only)
-router.patch('/:id/approval', requireBOD, paymentRequestController.updateApproval);
+// PATCH update approval status (Manager tahap 1, Head Finance/BOD tahap 2, Admin)
+router.patch('/:id/approval', requireRole('administrator', 'bod', 'manager', 'head_finance'), paymentRequestController.updateApproval);
 
 // PATCH update transfer status (Finance only)
 router.patch('/:id/transfer', requireFinance, paymentRequestController.updateTransfer);

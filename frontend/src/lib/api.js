@@ -239,18 +239,21 @@ export const countRecords = async (table, filters = {}) => {
  * Dipakai Dashboard & kartu statistik list.
  */
 export const getStatusCounts = async (table, statusField = 'status_approval') => {
-    const [total, pending, approved, rejected] = await Promise.all([
+    const [total, pending, managerApproved, approved, rejected] = await Promise.all([
         countRecords(table),
         countRecords(table, { [statusField]: 'Pending' }),
+        countRecords(table, { [statusField]: 'Manager Approved' }),
         countRecords(table, { [statusField]: 'Approved' }),
         countRecords(table, { [statusField]: 'Rejected' }),
     ]);
-    return { total, pending, approved, rejected };
+    return { total, pending, managerApproved, manager_approved: managerApproved, approved, rejected };
 };
 
 const normalizeRpcCount = (node) => ({
     total: Number(node?.total || 0),
     pending: Number(node?.pending || 0),
+    managerApproved: Number(node?.manager_approved || 0),
+    manager_approved: Number(node?.manager_approved || 0),
     approved: Number(node?.approved || 0),
     rejected: Number(node?.rejected || 0),
 });
@@ -549,29 +552,75 @@ export const bulkDeleteRecords = async (table, ids) => {
 // ============================================
 
 /**
- * Update approval status
+ * Update approval status — 3 tahap:
+ * 'Pending' -> 'Manager Approved' (oleh manager) -> 'Approved' (oleh head finance) -> transfer.
+ * Otomatis mengisi timestamp SLA. Fallback ke kolom legacy bila migrasi belum dijalankan.
  */
-export const updateApprovalStatus = async (table, id, status_approval) => {
+export const updateApprovalStatus = async (table, id, status_approval, opts = {}) => {
     ensureCanMutate();
 
-    const userName = localStorage.getItem('userName');
+    const userName = localStorage.getItem('userName') || opts.by || 'Manager';
+    const nowIso = new Date().toISOString();
 
-    const { data, error } = await supabase
+    const full = { status_approval };
+    if (status_approval === 'Manager Approved') {
+      full.manager_approved_by = userName;
+      full.manager_approved_at = nowIso;
+      full.disetujui_oleh = userName;
+      if ('nama_approver' in (opts || {})) full.nama_approver = userName;
+      else if (['kasbon', 'klaim', 'penyelesaian'].includes(table)) full.nama_approver = userName;
+    } else if (status_approval === 'Approved') {
+      full.head_finance_approved_by = userName;
+      full.head_finance_approved_at = nowIso;
+      full.disetujui_oleh = userName;
+      if (['kasbon', 'klaim', 'penyelesaian'].includes(table)) full.nama_approver = userName;
+      // Jika record lama langsung Approved tanpa jejak manager, isi juga manager timestamp
+      // agar durasi SLA tetap terhitung (dirapikan server bila kolom sudah ada).
+      if (opts.fillManager !== false) {
+        full.manager_approved_by = opts.managerBy || full.manager_approved_by || userName;
+        full.manager_approved_at = opts.managerAt || full.manager_approved_at || nowIso;
+      }
+    } else if (status_approval === 'Rejected') {
+      full.rejected_by = userName;
+      full.rejected_at = nowIso;
+      full.disetujui_oleh = userName;
+      if (['kasbon', 'klaim', 'penyelesaian'].includes(table)) full.nama_approver = userName;
+    } else {
+      full.disetujui_oleh = status_approval === 'Approved' ? userName : null;
+    }
+
+    const legacy = { status_approval: full.status_approval, disetujui_oleh: full.disetujui_oleh };
+    if (legacy && ['kasbon', 'klaim', 'penyelesaian'].includes(table) && full.nama_approver) {
+      legacy.nama_approver = full.nama_approver;
+    }
+
+    try {
+      const { data, error } = await supabase
         .from(table)
-        .update({
-            status_approval,
-            disetujui_oleh: status_approval === 'Approved' ? userName : null
-        })
+        .update(full)
         .eq('id', id)
         .select()
         .single();
-
-    if (error) throw error;
-    return data;
+      if (error) throw error;
+      return data;
+    } catch (err) {
+      const msg = `${err?.message || ''} ${err?.details || ''}`.toLowerCase();
+      const missingColumn = msg.includes('column') || msg.includes('schema') || msg.includes('could not find');
+      if (!missingColumn) throw err;
+      // Fallback DB lama: tulis status saja
+      const { data, error } = await supabase
+        .from(table)
+        .update(legacy)
+        .eq('id', id)
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    }
 };
 
 /**
- * Update transfer status
+ * Update transfer status — mengisi transferred_at untuk SLA transfer.
  */
 export const updateTransferStatus = async (table, id, status_transfer, bukti_transfer = null) => {
     ensureCanMutate();
@@ -580,16 +629,34 @@ export const updateTransferStatus = async (table, id, status_transfer, bukti_tra
     if (bukti_transfer) {
         updates.bukti_transfer = bukti_transfer;
     }
+    if (status_transfer === 'Sudah Transfer') {
+      updates.transferred_at = new Date().toISOString();
+    }
 
-    const { data, error } = await supabase
+    try {
+      const { data, error } = await supabase
         .from(table)
         .update(updates)
         .eq('id', id)
         .select()
         .single();
-
-    if (error) throw error;
-    return data;
+      if (error) throw error;
+      return data;
+    } catch (err) {
+      const msg = `${err?.message || ''} ${err?.details || ''}`.toLowerCase();
+      const missingColumn = msg.includes('column') || msg.includes('schema') || msg.includes('could not find');
+      if (!missingColumn) throw err;
+      const legacy = { status_transfer };
+      if (bukti_transfer) legacy.bukti_transfer = bukti_transfer;
+      const { data, error } = await supabase
+        .from(table)
+        .update(legacy)
+        .eq('id', id)
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    }
 };
 
 /**

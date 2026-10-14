@@ -184,15 +184,18 @@ const Dashboard = () => {
     return days;
   }, [rawData]);
 
-  // Pie chart data - Status distribution
+  // Pie chart data - Status distribution (termasuk Manager Approved = menunggu Head Finance)
   const statusChartData = useMemo(() => {
+    const mgrOf = (s) => (s.managerApproved ?? s.manager_approved ?? 0);
     const totalPending = stats.paymentRequest.pending + stats.kasbon.pending + stats.klaim.pending + stats.penyelesaian.pending;
+    const totalMgr = mgrOf(stats.paymentRequest) + mgrOf(stats.kasbon) + mgrOf(stats.klaim) + mgrOf(stats.penyelesaian);
     const totalApproved = stats.paymentRequest.approved + stats.kasbon.approved + stats.klaim.approved + stats.penyelesaian.approved;
     const totalRejected = stats.paymentRequest.rejected + stats.kasbon.rejected + stats.klaim.rejected + stats.penyelesaian.rejected;
 
     return [
       { name: 'Approved', value: totalApproved, color: '#10B981' },
       { name: 'Pending', value: totalPending, color: '#F59E0B' },
+      { name: 'Manager Approved', value: totalMgr, color: '#3B82F6' },
       { name: 'Rejected', value: totalRejected, color: '#EF4444' }
     ].filter(item => item.value > 0);
   }, [stats]);

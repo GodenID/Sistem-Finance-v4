@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const penyelesaianController = require('../controllers/penyelesaianController');
-const { authenticateToken, requireAdmin } = require('../middleware/auth');
+const { authenticateToken, requireRole, requireFinance, requireAdmin } = require('../middleware/auth');
 
 // All routes require authentication
 router.use(authenticateToken);
@@ -20,6 +20,12 @@ router.post('/', penyelesaianController.create);
 
 // PUT update penyelesaian
 router.put('/:id', penyelesaianController.update);
+
+// PATCH update approval status (Manager tahap 1, Head Finance/BOD tahap 2, Admin)
+router.patch('/:id/approval', requireRole('administrator', 'bod', 'manager', 'head_finance'), penyelesaianController.updateApproval);
+
+// PATCH update transfer status (Finance only)
+router.patch('/:id/transfer', requireFinance, penyelesaianController.updateTransfer);
 
 // DELETE penyelesaian
 router.delete('/:id', penyelesaianController.remove);

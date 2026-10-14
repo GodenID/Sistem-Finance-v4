@@ -13,6 +13,8 @@ import IdPerusahaanBadge from '../components/IdPerusahaanBadge';
 import QLLink from '../components/QLLink';
 import ConfirmModal from '../components/ConfirmModal';
 import PasteUpload from '../components/PasteUpload';
+import ApprovalTimeline from '../components/ApprovalTimeline';
+import { formatTanggalJam, formatTanggalJamPendek, getStatusBadgeClass, STAGE_LABEL } from '../lib/approvalFlow';
 import { sendTransferNotification } from '../lib/emailNotifications';
 import { exportPaymentRequestDetailExcel } from '../utils/detailExcelExport';
 import { exportPaymentRequestDetailPdf } from '../utils/detailPdfExport';
@@ -38,7 +40,14 @@ const PaymentRequestDetail = () => {
   const [isUploading, setIsUploading] = useState(false);
 
   // Check if user can approve — permission per-user (default mengikuti role)
-  const canApprove = hasPermission ? hasPermission('approve') : ['administrator', 'bod', 'manager'].includes(userRole);
+  // Tahap 1 (Manager): Pending -> Manager Approved | Tahap 2 (Head Finance): Manager Approved -> Approved
+  const canManagerApprove = pr?.status_approval === 'Pending' && (hasPermission
+    ? (hasPermission('approve_manager') || hasPermission('approve'))
+    : ['administrator', 'bod', 'manager'].includes(userRole));
+  const canHeadApprove = pr?.status_approval === 'Manager Approved' && (hasPermission
+    ? (hasPermission('approve_head_finance') || hasPermission('approve'))
+    : ['administrator', 'head_finance'].includes(userRole));
+  const canApprove = canManagerApprove || canHeadApprove;
   const canTransfer = hasPermission ? hasPermission('transfer') : userRole === 'team_finance';
   const canViewConfidential = hasPermission ? hasPermission('view_confidential') : ['administrator', 'bod', 'team_finance', 'hrd'].includes(userRole?.toLowerCase());
 
@@ -69,7 +78,7 @@ const PaymentRequestDetail = () => {
 
   // Show Approve Modal
   const showApproveModal = () => {
-    setConfirmModal({ isOpen: true, type: 'approve' });
+    setConfirmModal({ isOpen: true, type: canHeadApprove ? 'approve-head' : 'approve' });
   };
 
   // Show Reject Modal
@@ -82,15 +91,18 @@ const PaymentRequestDetail = () => {
     setConfirmModal({ isOpen: false, type: null });
   };
 
-  // Handle Approve
+  // Handle Approve Tahap 1 (Manager): Pending -> Manager Approved
   const handleApprove = async () => {
-    if (!pr || !canApprove) return;
+    if (!pr || !canManagerApprove) return;
 
     setIsApproving(true);
+    const nowIso = new Date().toISOString();
     try {
       await updateRecord('payment_requests', pr.id, {
-        status_approval: 'Approved',
-        disetujui_oleh: userName || 'Manager'
+        status_approval: 'Manager Approved',
+        disetujui_oleh: userName || 'Manager',
+        manager_approved_by: userName || 'Manager',
+        manager_approved_at: nowIso,
       });
       await logActivity({
         tableName: 'payment_requests',
@@ -99,12 +111,54 @@ const PaymentRequestDetail = () => {
         action: 'approve',
         fieldChanged: 'status_approval',
         oldValue: 'Pending',
+        newValue: 'Manager Approved',
+        changedBy: userId,
+        changedByName: userName
+      });
+      closeModal();
+      showToast('Disetujui Manager. Menunggu approval Head Finance.', 'success');
+      refreshNotifications();
+      const data = await getRecordById('payment_requests', id);
+      setPr(data);
+    } catch (error) {
+      console.error('Error approving:', error);
+      const msg = `${error?.message || ''}`.toLowerCase();
+      if (msg.includes('manager approved') || msg.includes('check') || msg.includes('constraint')) {
+        showToast('Database belum migrasi: jalankan supabase/migrations/add_head_finance_approval_flow.sql', 'error');
+      } else {
+        showToast('Gagal menyetujui Payment Request', 'error');
+      }
+    } finally {
+      setIsApproving(false);
+    }
+  };
+
+  // Handle Approve Tahap 2 (Head Finance): Manager Approved -> Approved
+  const handleApproveHead = async () => {
+    if (!pr || !canHeadApprove) return;
+
+    setIsApproving(true);
+    const nowIso = new Date().toISOString();
+    try {
+      await updateRecord('payment_requests', pr.id, {
+        status_approval: 'Approved',
+        disetujui_oleh: userName || 'Head Finance',
+        head_finance_approved_by: userName || 'Head Finance',
+        head_finance_approved_at: nowIso,
+      });
+      await logActivity({
+        tableName: 'payment_requests',
+        recordId: pr.id,
+        recordNumber: pr.nomor_pr,
+        action: 'approve',
+        fieldChanged: 'status_approval',
+        oldValue: 'Manager Approved',
         newValue: 'Approved',
         changedBy: userId,
         changedByName: userName
       });
       closeModal();
-      showToast('Payment Request berhasil disetujui', 'success');
+      showToast('Disetujui Head Finance. Siap transfer oleh Finance.', 'success');
       refreshNotifications();
       const data = await getRecordById('payment_requests', id);
       setPr(data);
@@ -116,23 +170,27 @@ const PaymentRequestDetail = () => {
     }
   };
 
-  // Handle Reject
+  // Handle Reject (bisa dari tahap Manager maupun Head Finance)
   const handleReject = async () => {
     if (!pr || !canApprove) return;
 
     setIsApproving(true);
+    const nowIso = new Date().toISOString();
     try {
-      await updateRecord('payment_requests', pr.id, {
+      const payload = {
         status_approval: 'Rejected',
-        disetujui_oleh: userName || 'Manager'
-      });
+        disetujui_oleh: userName || 'Manager',
+        rejected_by: userName || 'Manager',
+        rejected_at: nowIso,
+      };
+      await updateRecord('payment_requests', pr.id, payload);
       await logActivity({
         tableName: 'payment_requests',
         recordId: pr.id,
         recordNumber: pr.nomor_pr,
         action: 'reject',
         fieldChanged: 'status_approval',
-        oldValue: 'Pending',
+        oldValue: pr.status_approval || 'Pending',
         newValue: 'Rejected',
         changedBy: userId,
         changedByName: userName
@@ -161,7 +219,8 @@ const PaymentRequestDetail = () => {
         () => uploadFile(buktiTransferFile, 'payment-requests', pr.nomor_pr),
         (uploadResult) => updateRecord('payment_requests', pr.id, {
           bukti_transfer: uploadResult.url,
-          status_transfer: 'Sudah Transfer'
+          status_transfer: 'Sudah Transfer',
+          transferred_at: new Date().toISOString(),
         })
       );
 
@@ -625,10 +684,10 @@ const PaymentRequestDetail = () => {
                   <p className="text-base font-semibold text-gray-800"><QLLink ql={pr.nomor_ql} linkClassName="text-blue-600" /></p>
                 </div>
                 <div>
-                  <label className="text-sm text-gray-500">Tanggal</label>
+                  <label className="text-sm text-gray-500">Tanggal & Jam Pengajuan</label>
                   <p className="text-base text-gray-800 flex items-center space-x-2">
                     <Calendar className="w-4 h-4 text-gray-400" />
-                    <span>{pr.created_at ? new Date(pr.created_at).toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) : '-'}</span>
+                    <span>{pr.created_at ? formatTanggalJam(pr.created_at) : '-'}</span>
                   </p>
                 </div>
                 <div>
@@ -784,19 +843,17 @@ const PaymentRequestDetail = () => {
                 <div>
                   <label className="text-xs text-gray-500">Status Approval</label>
                   <div className="mt-1">
-                    <span className={`inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-semibold ${pr.status_approval === 'Approved' ? 'bg-green-100 text-green-700' :
-                      pr.status_approval === 'Rejected' ? 'bg-red-100 text-red-700' :
-                        'bg-yellow-100 text-yellow-700'
-                      }`}>
+                    <span className={`inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-semibold ${getStatusBadgeClass(pr.status_approval)}`}>
                       {pr.status_approval === 'Approved' && <CheckCircle className="w-4 h-4 mr-1" />}
                       {pr.status_approval === 'Rejected' && <XCircle className="w-4 h-4 mr-1" />}
-                      {pr.status_approval || 'Pending'}
+                      {pr.status_approval === 'Manager Approved' ? 'Manager Approved' : (pr.status_approval || 'Pending')}
                     </span>
+                    <p className="text-[11px] text-gray-500 mt-1">{STAGE_LABEL[pr.status_approval] || ''}</p>
                   </div>
                 </div>
                 <div>
                   <label className="text-xs text-gray-500">Disetujui Oleh</label>
-                  <p className="text-sm font-medium text-gray-800 mt-1">{pr.disetujui_oleh || '-'}</p>
+                  <p className="text-sm font-medium text-gray-800 mt-1">{pr.head_finance_approved_by || pr.manager_approved_by || pr.disetujui_oleh || '-'}</p>
                 </div>
                 <div>
                   <label className="text-xs text-gray-500">Status Transfer</label>
@@ -828,17 +885,18 @@ const PaymentRequestDetail = () => {
               </div>
             </div>
 
-            {/* Approval Actions */}
-            {canApprove && pr.status_approval === 'Pending' && (
+            {/* Approval Actions Tahap 1: Manager */}
+            {canManagerApprove && (
               <div className="card border-2 border-amber-200 bg-amber-50">
-                <h2 className="text-sm font-semibold text-amber-800 mb-3">Aksi Approval</h2>
+                <h2 className="text-sm font-semibold text-amber-800 mb-1">Approval Manager (Tahap 1)</h2>
+                <p className="text-xs text-amber-700 mb-3">Menyetujui akan meneruskan ke Head Finance.</p>
                 <div className="space-y-2">
                   <button
                     onClick={showApproveModal}
                     className="w-full flex items-center justify-center space-x-2 px-4 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium"
                   >
                     <CheckCircle className="w-4 h-4" />
-                    <span>Approve</span>
+                    <span>Approve Manager</span>
                   </button>
                   <button
                     onClick={showRejectModal}
@@ -850,6 +908,33 @@ const PaymentRequestDetail = () => {
                 </div>
               </div>
             )}
+
+            {/* Approval Actions Tahap 2: Head Finance */}
+            {canHeadApprove && (
+              <div className="card border-2 border-indigo-200 bg-indigo-50">
+                <h2 className="text-sm font-semibold text-indigo-800 mb-1">Approval Head Finance (Tahap 2)</h2>
+                <p className="text-xs text-indigo-700 mb-3">Sudah di-approve Manager. Menyetujui akan meneruskan ke Finance untuk transfer.</p>
+                <div className="space-y-2">
+                  <button
+                    onClick={showApproveModal}
+                    className="w-full flex items-center justify-center space-x-2 px-4 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-medium"
+                  >
+                    <CheckCircle className="w-4 h-4" />
+                    <span>Approve Head Finance</span>
+                  </button>
+                  <button
+                    onClick={showRejectModal}
+                    className="w-full flex items-center justify-center space-x-2 px-4 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium"
+                  >
+                    <XCircle className="w-4 h-4" />
+                    <span>Reject</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Timeline SLA */}
+            <ApprovalTimeline record={pr} transferLabel="Transfer Finance" />
 
             {/* Transfer Actions for Team Finance */}
             {canTransfer && pr.status_approval === 'Approved' && pr.status_transfer === 'Belum Transfer' && (
@@ -871,15 +956,44 @@ const PaymentRequestDetail = () => {
         </div>
       </div>
 
-      {/* Approval Confirm Modal */}
+      {/* Approval Confirm Modal Tahap 1 (Manager) */}
       <ConfirmModal
         isOpen={confirmModal.isOpen && confirmModal.type === 'approve'}
         onClose={closeModal}
         onConfirm={handleApprove}
         type="success"
-        title="Setujui Payment Request"
-        message={`Apakah Anda yakin ingin menyetujui Payment Request ini?`}
-        confirmText="Ya, Setujui"
+        title="Approve Manager (Tahap 1)"
+        message={`Setujui sebagai Manager? Setelah ini diteruskan ke Head Finance.`}
+        confirmText="Ya, Approve Manager"
+        cancelText="Batal"
+        isLoading={isApproving}
+        details={
+          <div className="space-y-2 text-sm">
+            <div className="flex justify-between">
+              <span className="text-gray-500">Nomor PR:</span>
+              <span className="font-semibold text-gray-800">{pr?.nomor_pr}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Nominal:</span>
+              <span className="font-semibold text-green-600">Rp {formatRupiah(pr?.nominal || 0)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Vendor:</span>
+              <span className="font-medium text-gray-800">{pr?.vendor_name || getVendorById(pr?.id_vendor)?.nama || '-'}</span>
+            </div>
+          </div>
+        }
+      />
+
+      {/* Approval Confirm Modal Tahap 2 (Head Finance) */}
+      <ConfirmModal
+        isOpen={confirmModal.isOpen && confirmModal.type === 'approve-head'}
+        onClose={closeModal}
+        onConfirm={handleApproveHead}
+        type="success"
+        title="Approve Head Finance (Tahap 2)"
+        message={`Setujui sebagai Head Finance? Setelah ini diteruskan ke Finance untuk transfer.`}
+        confirmText="Ya, Approve Head Finance"
         cancelText="Batal"
         isLoading={isApproving}
         details={

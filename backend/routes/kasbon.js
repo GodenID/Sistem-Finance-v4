@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const kasbonController = require('../controllers/kasbonController');
-const { authenticateToken, requireFinance, requireBOD, requireAdmin } = require('../middleware/auth');
+const { authenticateToken, requireRole, requireFinance, requireBOD, requireAdmin } = require('../middleware/auth');
 
 // All routes require authentication
 router.use(authenticateToken);
@@ -21,8 +21,8 @@ router.post('/', kasbonController.create);
 // PUT update kasbon
 router.put('/:id', kasbonController.update);
 
-// PATCH update approval status (BOD only)
-router.patch('/:id/approval', requireBOD, kasbonController.updateApproval);
+// PATCH update approval status (Manager tahap 1, Head Finance/BOD tahap 2, Admin)
+router.patch('/:id/approval', requireRole('administrator', 'bod', 'manager', 'head_finance'), kasbonController.updateApproval);
 
 // PATCH update transfer status (Finance only)
 router.patch('/:id/transfer', requireFinance, kasbonController.updateTransfer);
