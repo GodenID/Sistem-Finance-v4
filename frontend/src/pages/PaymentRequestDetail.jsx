@@ -142,7 +142,6 @@ const PaymentRequestDetail = () => {
     try {
       await updateRecord('payment_requests', pr.id, {
         status_approval: 'Approved',
-        disetujui_oleh: userName || 'Head Finance',
         head_finance_approved_by: userName || 'Head Finance',
         head_finance_approved_at: nowIso,
       });
@@ -442,7 +441,8 @@ const PaymentRequestDetail = () => {
     doc.setFontSize(10);
 
     addField('Status Approval', pr.status_approval || 'Pending');
-    addField('Disetujui Oleh', pr.disetujui_oleh || '-');
+    addField('Disetujui Manager', pr.manager_approved_by || pr.disetujui_oleh || '-');
+    addField('Disetujui Head Finance', pr.head_finance_approved_by || '-');
     addField('Status Transfer', pr.status_transfer || 'Belum Transfer');
 
     // Section: Keterangan
@@ -852,8 +852,12 @@ const PaymentRequestDetail = () => {
                   </div>
                 </div>
                 <div>
-                  <label className="text-xs text-gray-500">Disetujui Oleh</label>
-                  <p className="text-sm font-medium text-gray-800 mt-1">{pr.head_finance_approved_by || pr.manager_approved_by || pr.disetujui_oleh || '-'}</p>
+                  <label className="text-xs text-gray-500">Disetujui Manager</label>
+                  <p className="text-sm font-medium text-gray-800 mt-1">{pr.manager_approved_by || pr.disetujui_oleh || '-'}</p>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500">Disetujui Head Finance</label>
+                  <p className="text-sm font-medium text-gray-800 mt-1">{pr.head_finance_approved_by || '-'}</p>
                 </div>
                 <div>
                   <label className="text-xs text-gray-500">Status Transfer</label>

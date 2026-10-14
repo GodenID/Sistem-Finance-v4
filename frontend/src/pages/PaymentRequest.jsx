@@ -807,7 +807,6 @@ const PaymentRequest = () => {
         try {
           await updateRecord('payment_requests', pr.id, {
             status_approval: 'Approved',
-            disetujui_oleh: userName || 'Head Finance',
             head_finance_approved_by: userName || null,
             head_finance_approved_at: new Date().toISOString()
           });
@@ -1326,7 +1325,7 @@ const PaymentRequest = () => {
     doc.setTextColor(0, 0, 0);
 
     doc.setFont('helvetica', 'bold');
-    doc.text('Disetujui Oleh:', rightCol, yPos);
+    doc.text('Disetujui Manager:', rightCol, yPos);
     doc.setFont('helvetica', 'normal');
     doc.text(pr.disetujuiOleh, rightCol + 30, yPos);
 
@@ -1570,7 +1569,7 @@ const PaymentRequest = () => {
                     <th className="text-center py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Lampiran</th>
                     <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Keterangan</th>
                     <th className="text-center py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Status Approval</th>
-                    <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Disetujui Oleh</th>
+                    <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Disetujui Manager</th>
                     <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Disetujui Head Finance</th>
                     <th className="text-center py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Status Transfer</th>
                     <th className="text-center py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Bukti Transfer</th>

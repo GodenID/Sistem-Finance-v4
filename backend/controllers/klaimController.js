@@ -194,12 +194,12 @@ const updateApproval = async (req, res) => {
                 const mgrAt = row.manager_approved_at || row.updated_at || row.created_at;
                 result = await db.query(
                     `UPDATE klaim
-       SET status_approval = $1, disetujui_oleh = $2, head_finance_approved_by = $3, head_finance_approved_at = NOW(),
-           manager_approved_by = COALESCE(manager_approved_by, $4), manager_approved_at = COALESCE(manager_approved_at, $5),
+       SET status_approval = $1, head_finance_approved_by = $2, head_finance_approved_at = NOW(),
+           manager_approved_by = COALESCE(manager_approved_by, $3), manager_approved_at = COALESCE(manager_approved_at, $4),
            updated_at = NOW()
-       WHERE id = $6
+       WHERE id = $5
        RETURNING *`,
-                    [status_approval, req.user.id, approverName, mgrBy, mgrAt, id]
+                    [status_approval, approverName, mgrBy, mgrAt, id]
                 );
             } else if (status_approval === 'Rejected') {
                 result = await db.query(

@@ -120,7 +120,6 @@ const KasbonDetail = () => {
         try {
             await updateRecord('kasbon', kasbon.id, {
                 status_approval: 'Approved',
-                nama_approver: userName || 'Head Finance',
                 head_finance_approved_by: userName || 'Head Finance',
                 head_finance_approved_at: nowIso
             });
@@ -397,7 +396,8 @@ const KasbonDetail = () => {
         doc.setFontSize(10);
 
         addField('Status Approval', kasbon.status_approval || 'Pending');
-        addField('Disetujui Oleh', kasbon.nama_approver || '-');
+        addField('Disetujui Manager', kasbon.manager_approved_by || kasbon.nama_approver || '-');
+        addField('Disetujui Head Finance', kasbon.head_finance_approved_by || '-');
         addField('Status Transfer', kasbon.status_transfer || 'Belum Transfer');
 
         // Section: Keterangan
@@ -731,8 +731,12 @@ const KasbonDetail = () => {
                                     </div>
                                 </div>
                                 <div>
-                                    <label className="text-xs text-gray-500">Disetujui Oleh</label>
-                                    <p className="text-sm font-medium text-gray-800 mt-1">{kasbon.head_finance_approved_by || kasbon.manager_approved_by || kasbon.nama_approver || '-'}</p>
+                                    <label className="text-xs text-gray-500">Disetujui Manager</label>
+                                    <p className="text-sm font-medium text-gray-800 mt-1">{kasbon.manager_approved_by || kasbon.nama_approver || '-'}</p>
+                                </div>
+                                <div>
+                                    <label className="text-xs text-gray-500">Disetujui Head Finance</label>
+                                    <p className="text-sm font-medium text-gray-800 mt-1">{kasbon.head_finance_approved_by || '-'}</p>
                                 </div>
                                 <div>
                                     <label className="text-xs text-gray-500">Status Transfer</label>

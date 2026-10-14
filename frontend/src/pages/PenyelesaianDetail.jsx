@@ -194,8 +194,6 @@ const PenyelesaianDetail = () => {
                     const nowIso = new Date().toISOString();
                     await updateRecord('penyelesaian', penyelesaian.id, {
                         status_approval: 'Approved',
-                        disetujui_oleh: userName || 'Head Finance',
-                        nama_approver: userName || 'Head Finance',
                         head_finance_approved_by: userName || 'Head Finance',
                         head_finance_approved_at: nowIso
                     });
@@ -529,7 +527,8 @@ const PenyelesaianDetail = () => {
         doc.setFontSize(10);
 
         addField('Status Approval', penyelesaian.status_approval || 'Pending');
-        addField('Disetujui Oleh', penyelesaian.nama_approver || '-');
+        addField('Disetujui Manager', penyelesaian.manager_approved_by || penyelesaian.nama_approver || penyelesaian.disetujui_oleh || '-');
+        addField('Disetujui Head Finance', penyelesaian.head_finance_approved_by || '-');
         addField('Status Penyelesaian', penyelesaian.status_penyelesaian || 'Belum Selesai');
         if (penyelesaian.metode_pengembalian) {
             addField('Metode Pengembalian', penyelesaian.metode_pengembalian);
@@ -929,8 +928,12 @@ const PenyelesaianDetail = () => {
                                     </div>
                                 </div>
                                 <div>
-                                    <label className="text-xs text-gray-500">Disetujui Oleh</label>
-                                    <p className="text-sm font-medium text-gray-800 mt-1">{penyelesaian.head_finance_approved_by || penyelesaian.manager_approved_by || penyelesaian.nama_approver || '-'}</p>
+                                    <label className="text-xs text-gray-500">Disetujui Manager</label>
+                                    <p className="text-sm font-medium text-gray-800 mt-1">{penyelesaian.manager_approved_by || penyelesaian.nama_approver || penyelesaian.disetujui_oleh || '-'}</p>
+                                </div>
+                                <div>
+                                    <label className="text-xs text-gray-500">Disetujui Head Finance</label>
+                                    <p className="text-sm font-medium text-gray-800 mt-1">{penyelesaian.head_finance_approved_by || '-'}</p>
                                 </div>
                                 <div>
                                     <label className="text-xs text-gray-500">Status Penyelesaian</label>

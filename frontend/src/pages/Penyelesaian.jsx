@@ -891,8 +891,6 @@ const Penyelesaian = () => {
           const nowIso = new Date().toISOString();
           await updateRecord('penyelesaian', penyelesaian.id, {
             status_approval: 'Approved',
-            disetujui_oleh: userId || null,
-            nama_approver: userName || 'Head Finance',
             head_finance_approved_by: userName || 'Head Finance',
             head_finance_approved_at: nowIso
           });
@@ -1294,7 +1292,7 @@ const Penyelesaian = () => {
                     <th className="text-center py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Metode Pengembalian</th>
                     <th className="text-center py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Lampiran</th>
                     <th className="text-center py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Status Approval</th>
-                    <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Disetujui Oleh</th>
+                    <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Disetujui Manager</th>
                     <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Disetujui Head Finance</th>
                     <th className="text-center py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Status Penyelesaian</th>
                     <th className="text-center py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Aksi</th>

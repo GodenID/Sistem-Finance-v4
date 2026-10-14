@@ -799,7 +799,7 @@ const Laporan = () => {
       const prData = [
         ['DETAIL PAYMENT REQUEST'],
         [''],
-        ['No PR', 'No QL', 'Tanggal & Jam Pengajuan', 'Tipe', 'Karyawan', 'Metode', 'Tujuan Pembayaran', 'Nominal', 'Status Approval', 'Disetujui Oleh', 'Status Transfer', 'Approve Manager Pada', 'Durasi Manager', 'Approve Head Finance Pada', 'Durasi Head Finance', 'Transfer Pada', 'Durasi Transfer'],
+        ['No PR', 'No QL', 'Tanggal & Jam Pengajuan', 'Tipe', 'Karyawan', 'Metode', 'Tujuan Pembayaran', 'Nominal', 'Status Approval', 'Disetujui Manager', 'Status Transfer', 'Approve Manager Pada', 'Durasi Manager', 'Approve Head Finance Pada', 'Durasi Head Finance', 'Transfer Pada', 'Durasi Transfer'],
         ...filteredData.paymentRequests.map(pr => {
           const dd = calcDurations(pr);
           return [
@@ -812,7 +812,7 @@ const Laporan = () => {
           getPaymentDestination(pr),
           formatRupiah(pr.nominal || 0),
           pr.status_approval || 'Pending',
-          pr.head_finance_approved_by || pr.manager_approved_by || pr.disetujui_oleh || '-',
+          pr.manager_approved_by || pr.disetujui_oleh || '-',
           pr.status_transfer || 'Belum Transfer',
           pr.manager_approved_at ? formatTanggalJamPendek(pr.manager_approved_at) : '-',
           dd.manager,
@@ -853,7 +853,7 @@ const Laporan = () => {
       const kasbonData = [
         ['DETAIL KASBON'],
         [''],
-        ['No Kasbon', 'No QL', 'Tanggal & Jam Pengajuan', 'Tipe', 'Karyawan', 'Nominal', 'Metode Pembayaran', 'Status Approval', 'Disetujui Oleh', 'Status Transfer', 'Approve Manager Pada', 'Durasi Manager', 'Approve Head Finance Pada', 'Durasi Head Finance', 'Transfer Pada', 'Durasi Transfer'],
+        ['No Kasbon', 'No QL', 'Tanggal & Jam Pengajuan', 'Tipe', 'Karyawan', 'Nominal', 'Metode Pembayaran', 'Status Approval', 'Disetujui Manager', 'Status Transfer', 'Approve Manager Pada', 'Durasi Manager', 'Approve Head Finance Pada', 'Durasi Head Finance', 'Transfer Pada', 'Durasi Transfer'],
         ...filteredData.kasbon.map(kb => {
           const dd = calcDurations(kb);
           return [
@@ -865,7 +865,7 @@ const Laporan = () => {
           formatRupiah(kb.nominal || 0),
           kb.metode_pembayaran || '-',
           kb.status_approval || 'Pending',
-          kb.head_finance_approved_by || kb.manager_approved_by || kb.nama_approver || '-',
+          kb.manager_approved_by || kb.nama_approver || kb.disetujui_oleh || '-',
           kb.status_transfer || 'Belum Transfer',
           kb.manager_approved_at ? formatTanggalJamPendek(kb.manager_approved_at) : '-',
           dd.manager,
@@ -898,7 +898,7 @@ const Laporan = () => {
       const klaimData = [
         ['DETAIL KLAIM'],
         [''],
-        ['No Klaim', 'No QL', 'Tanggal & Jam Pengajuan', 'Tipe', 'Karyawan', 'Nominal', 'Metode Pembayaran', 'Status Approval', 'Disetujui Oleh', 'Status Transfer', 'Approve Manager Pada', 'Durasi Manager', 'Approve Head Finance Pada', 'Durasi Head Finance', 'Transfer Pada', 'Durasi Transfer'],
+        ['No Klaim', 'No QL', 'Tanggal & Jam Pengajuan', 'Tipe', 'Karyawan', 'Nominal', 'Metode Pembayaran', 'Status Approval', 'Disetujui Manager', 'Status Transfer', 'Approve Manager Pada', 'Durasi Manager', 'Approve Head Finance Pada', 'Durasi Head Finance', 'Transfer Pada', 'Durasi Transfer'],
         ...filteredData.klaim.map(kl => {
           const dd = calcDurations(kl);
           return [
@@ -910,7 +910,7 @@ const Laporan = () => {
           formatRupiah(kl.nominal || 0),
           kl.metode_pembayaran || '-',
           kl.status_approval || 'Pending',
-          kl.head_finance_approved_by || kl.manager_approved_by || kl.nama_approver || '-',
+          kl.manager_approved_by || kl.nama_approver || kl.disetujui_oleh || '-',
           kl.status_transfer || 'Belum Transfer',
           kl.manager_approved_at ? formatTanggalJamPendek(kl.manager_approved_at) : '-',
           dd.manager,

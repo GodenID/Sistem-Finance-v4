@@ -572,8 +572,6 @@ export const updateApprovalStatus = async (table, id, status_approval, opts = {}
     } else if (status_approval === 'Approved') {
       full.head_finance_approved_by = userName;
       full.head_finance_approved_at = nowIso;
-      full.disetujui_oleh = userName;
-      if (['kasbon', 'klaim', 'penyelesaian'].includes(table)) full.nama_approver = userName;
       // Jika record lama langsung Approved tanpa jejak manager, isi juga manager timestamp
       // agar durasi SLA tetap terhitung (dirapikan server bila kolom sudah ada).
       if (opts.fillManager !== false) {

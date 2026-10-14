@@ -593,8 +593,6 @@ const Kasbon = () => {
         try {
           await updateRecord('kasbon', kasbon.id, {
             status_approval: 'Approved',
-            disetujui_oleh: userId || null,
-            nama_approver: userName || 'Head Finance',
             head_finance_approved_by: userName || null,
             head_finance_approved_at: new Date().toISOString()
           });
@@ -1063,7 +1061,7 @@ const Kasbon = () => {
                     <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Informasi Bank</th>
                     <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Keterangan</th>
                     <th className="text-center py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Status Approval</th>
-                    <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Disetujui Oleh</th>
+                    <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Disetujui Manager</th>
                     <th className="text-left py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Disetujui Head Finance</th>
                     <th className="text-center py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Status Transfer</th>
                     <th className="text-center py-4 px-6 text-xs font-semibold text-gray-600 uppercase tracking-wider">Status Penyelesaian</th>
@@ -1864,7 +1862,7 @@ const Kasbon = () => {
                     <p className="mt-2">{getStatusApprovalBadge(selectedKasbon.statusApproval)}</p>
                   </div>
                   <div>
-                    <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Disetujui Oleh</label>
+                    <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Disetujui Manager</label>
                     <p className="text-base text-gray-700 mt-1">{selectedKasbon.disetujuiOleh}</p>
                   </div>
                   <div className="col-span-2">
