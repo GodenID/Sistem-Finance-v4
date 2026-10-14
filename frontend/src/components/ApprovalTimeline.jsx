@@ -16,7 +16,8 @@ const ApprovalTimeline = ({ record = {}, transferLabel = 'Transfer Finance' }) =
   const iCanManager = can('approve_manager', ['administrator', 'bod', 'manager']) || can('approve', ['administrator', 'bod', 'manager']);
   const iCanHead = can('approve_head_finance', ['administrator', 'head_finance']) || can('approve', ['administrator', 'head_finance']);
   const iCanTransfer = can('transfer', ['administrator', 'team_finance']);
-  const waitingTransfer = (record.status_transfer === 'Belum Transfer' || record.status_penyelesaian === 'Belum Selesai') && record.status_approval === 'Approved';
+  const isTransferred = !!(record.transferred_at || record.completed_at || record.status_transfer === 'Sudah Transfer' || record.status_penyelesaian === 'Selesai');
+  const waitingTransfer = !isTransferred && (record.status_transfer === 'Belum Transfer' || record.status_penyelesaian === 'Belum Selesai' || !record.status_transfer) && record.status_approval === 'Approved' && !rejected;
 
   const steps = [
     {
@@ -46,8 +47,8 @@ const ApprovalTimeline = ({ record = {}, transferLabel = 'Transfer Finance' }) =
       title: transferLabel,
       time: record.transferred_at || record.completed_at,
       by: null,
-      done: !!(record.transferred_at || record.completed_at || record.status_transfer === 'Sudah Transfer' || record.status_penyelesaian === 'Selesai'),
-      waiting: record.status_approval === 'Approved' && !rejected,
+      done: isTransferred,
+      waiting: waitingTransfer,
       duration: d.transferMs != null ? `Durasi: ${d.transfer}` : null,
     },
   ];
@@ -109,6 +110,12 @@ const ApprovalTimeline = ({ record = {}, transferLabel = 'Transfer Finance' }) =
           <p>{iCanTransfer
             ? 'Menunggu transfer Finance — Anda bisa upload bukti transfer lewat panel Aksi Transfer.'
             : 'Menunggu transfer oleh Finance.'}</p>
+        </div>
+      )}
+      {!rejected && isTransferred && (
+        <div className="mt-4 p-3 rounded-lg bg-green-50 border border-green-200 text-sm text-green-800 flex items-start gap-2">
+          <CheckCircle className="w-4 h-4 mt-0.5 shrink-0" />
+          <p>Selesai — sudah ditransfer{record.transferred_at || record.completed_at ? ` pada ${formatTanggalJam(record.transferred_at || record.completed_at)}` : ''}.</p>
         </div>
       )}
       <p className="text-[11px] text-gray-400 mt-3">

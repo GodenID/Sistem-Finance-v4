@@ -558,8 +558,12 @@ export const exportPaymentRequestDetailPdf = async (pr, vendorInfo) => {
         title: 'Status',
         rows: [
           ['Status Approval', pr.status_approval || 'Pending'],
-          ['Disetujui Oleh', pr.disetujui_oleh],
-          ['Status Transfer', pr.status_transfer || 'Belum Transfer']
+          ['Disetujui Manager', pr.manager_approved_by || pr.disetujui_oleh],
+          ['Waktu Approve Manager', formatDateTime(pr.manager_approved_at)],
+          ['Disetujui Head Finance', pr.head_finance_approved_by],
+          ['Waktu Approve Head Finance', formatDateTime(pr.head_finance_approved_at)],
+          ['Status Transfer', pr.status_transfer || 'Belum Transfer'],
+          ['Waktu Transfer', formatDateTime(pr.transferred_at)]
         ]
       }
     ]
@@ -606,8 +610,12 @@ export const exportKasbonDetailPdf = async (kasbon) => {
         title: 'Status',
         rows: [
           ['Status Approval', kasbon.status_approval || 'Pending'],
-          ['Disetujui Oleh', kasbon.nama_approver],
-          ['Status Transfer', kasbon.status_transfer || 'Belum Transfer']
+          ['Disetujui Manager', kasbon.manager_approved_by || kasbon.nama_approver],
+          ['Waktu Approve Manager', formatDateTime(kasbon.manager_approved_at)],
+          ['Disetujui Head Finance', kasbon.head_finance_approved_by],
+          ['Waktu Approve Head Finance', formatDateTime(kasbon.head_finance_approved_at)],
+          ['Status Transfer', kasbon.status_transfer || 'Belum Transfer'],
+          ['Waktu Transfer', formatDateTime(kasbon.transferred_at)]
         ]
       }
     ]
@@ -655,8 +663,12 @@ export const exportKlaimDetailPdf = async (klaim) => {
         title: 'Status',
         rows: [
           ['Status Approval', klaim.status_approval || 'Pending'],
-          ['Disetujui Oleh', klaim.nama_approver],
-          ['Status Transfer', klaim.status_transfer || 'Belum Transfer']
+          ['Disetujui Manager', klaim.manager_approved_by || klaim.nama_approver],
+          ['Waktu Approve Manager', formatDateTime(klaim.manager_approved_at)],
+          ['Disetujui Head Finance', klaim.head_finance_approved_by],
+          ['Waktu Approve Head Finance', formatDateTime(klaim.head_finance_approved_at)],
+          ['Status Transfer', klaim.status_transfer || 'Belum Transfer'],
+          ['Waktu Transfer', formatDateTime(klaim.transferred_at)]
         ]
       }
     ]
@@ -699,7 +711,10 @@ export const exportPenyelesaianDetailPdf = async (penyelesaian) => {
         title: 'Status',
         rows: [
           ['Status Approval', penyelesaian.status_approval || 'Pending'],
-          ['Disetujui Oleh', penyelesaian.nama_approver],
+          ['Disetujui Manager', penyelesaian.manager_approved_by || penyelesaian.nama_approver],
+          ['Waktu Approve Manager', formatDateTime(penyelesaian.manager_approved_at)],
+          ['Disetujui Head Finance', penyelesaian.head_finance_approved_by],
+          ['Waktu Approve Head Finance', formatDateTime(penyelesaian.head_finance_approved_at)],
           ['Status Penyelesaian', penyelesaian.status_penyelesaian || 'Belum Selesai'],
           ['Metode Pengembalian', penyelesaian.metode_pengembalian]
         ]
