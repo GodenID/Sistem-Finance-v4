@@ -8,6 +8,7 @@ import ProtectedRoute from './components/ProtectedRoute';
 import AdminRoute from './components/AdminRoute';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
+import ChangelogModal from './components/ChangelogModal';
 import PageLoading from './components/PageLoading';
 import SiteGate from './components/SiteGate';
 
@@ -92,6 +93,7 @@ function App() {
                           {/* Main Content */}
                           <div className="flex-1 flex flex-col overflow-hidden min-w-0">
                             <Header toggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
+                            <ChangelogModal />
                             <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-50">
                               <Suspense fallback={<PageLoading />}>
                                 <Routes>
