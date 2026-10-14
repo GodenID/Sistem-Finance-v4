@@ -24,8 +24,6 @@ const PenyelesaianDetail = () => {
     const { refreshNotifications } = useNotification();
     // Permission per-user (default mengikuti role, bisa dioverride Administrator)
     const isFinance = hasPermission ? hasPermission('transfer') : userRole === 'team_finance';
-    const canManagerApprove = penyelesaian?.status_approval === 'Pending' && (hasPermission ? (hasPermission('approve_manager') || hasPermission('approve')) : ['administrator', 'bod', 'manager'].includes(userRole));
-    const canHeadApprove = penyelesaian?.status_approval === 'Manager Approved' && (hasPermission ? (hasPermission('approve_head_finance') || hasPermission('approve')) : ['administrator', 'head_finance'].includes(userRole));
     const canViewConfidential = hasPermission ? hasPermission('view_confidential') : ['administrator', 'bod', 'team_finance', 'hrd'].includes(userRole?.toLowerCase());
     const [penyelesaian, setPenyelesaian] = useState(null);
     const [kasbonId, setKasbonId] = useState(null);
@@ -43,6 +41,10 @@ const PenyelesaianDetail = () => {
     const [showBuktiKekuranganModal, setShowBuktiKekuranganModal] = useState(false);
     const [buktiKekuranganFile, setBuktiKekuranganFile] = useState(null);
     const [isUploadingBuktiKekurangan, setIsUploadingBuktiKekurangan] = useState(false);
+
+    // Tahap 1 (Manager): Pending -> Manager Approved | Tahap 2 (Head Finance): Manager Approved -> Approved
+    const canManagerApprove = penyelesaian?.status_approval === 'Pending' && (hasPermission ? (hasPermission('approve_manager') || hasPermission('approve')) : ['administrator', 'bod', 'manager'].includes(userRole));
+    const canHeadApprove = penyelesaian?.status_approval === 'Manager Approved' && (hasPermission ? (hasPermission('approve_head_finance') || hasPermission('approve')) : ['administrator', 'head_finance'].includes(userRole));
 
     useEffect(() => {
         const fetchPenyelesaianDetail = async () => {
