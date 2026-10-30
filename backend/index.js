@@ -8,20 +8,27 @@ const PORT = process.env.PORT || 3001;
 
 // Middleware
 // FRONTEND_URL boleh berisi beberapa origin dipisah koma (mis. domain produksi
-// dan domain preview Cloudflare Pages) supaya CORS tetap ketat tapi fleksibel.
+// dan domain preview Cloudflare Pages). Satu segmen host boleh ditulis '*' untuk
+// mencocokkan subdomain apa pun, mis. https://*.finance-v3-e0e.pages.dev.
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173')
     .split(',')
     .map((origin) => origin.trim().replace(/\/$/, ''))
-    .filter(Boolean);
+    .filter(Boolean)
+    .map((origin) => {
+        const pattern = origin
+            .split('*')
+            .map((part) => escapeRegex(part))
+            .join('[^.]+');
+        return { plain: origin, matcher: new RegExp(`^${pattern}$`) };
+    });
 
 app.use(cors({
     origin: (origin, callback) => {
         if (!origin) return callback(null, true);
         const normalized = origin.replace(/\/$/, '');
         const allowed = allowedOrigins.some((entry) =>
-            entry.startsWith('*.')
-                ? normalized.endsWith(entry.slice(1))
-                : entry === normalized
+            entry.plain === normalized || entry.matcher.test(normalized)
         );
         return allowed ? callback(null, true) : callback(null, false);
     },
