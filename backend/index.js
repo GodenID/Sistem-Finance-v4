@@ -7,8 +7,24 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Middleware
+// FRONTEND_URL boleh berisi beberapa origin dipisah koma (mis. domain produksi
+// dan domain preview Cloudflare Pages) supaya CORS tetap ketat tapi fleksibel.
+const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173')
+    .split(',')
+    .map((origin) => origin.trim().replace(/\/$/, ''))
+    .filter(Boolean);
+
 app.use(cors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+    origin: (origin, callback) => {
+        if (!origin) return callback(null, true);
+        const normalized = origin.replace(/\/$/, '');
+        const allowed = allowedOrigins.some((entry) =>
+            entry.startsWith('*.')
+                ? normalized.endsWith(entry.slice(1))
+                : entry === normalized
+        );
+        return allowed ? callback(null, true) : callback(null, false);
+    },
     credentials: true
 }));
 app.use(express.json());

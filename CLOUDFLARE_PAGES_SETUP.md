@@ -56,16 +56,15 @@ Cloudflare Pages adalah platform hosting gratis untuk aplikasi frontend statis (
 
 6. **Environment Variables** (dibakar saat build — wajib Redeploy tiap ubah)
     - Klik **"Add variable"** untuk setiap environment variable, untuk **Production** (dan Preview bila perlu):
-      - `VITE_SUPABASE_URL` = `https://db-finance.prasastigroup.id`
-      - `VITE_SUPABASE_ANON_KEY` = (isi dari dashboard Supabase)
+      - `VITE_BACKEND_URL` = `https://backend-finance.prasastigroup.id` (URL publik backend Express)
       - `VITE_R2_WORKER_URL` = `https://finance-v3-upload.ranggadhisesa.workers.dev`
       - `VITE_EMAIL_NOTIFICATION_URL` = `https://finance-v3-email.ranggadhisesa.workers.dev`
       - `VITE_TURNSTILE_SITEKEY` = `0x4AAAAAAE1FPMavLq99krrk`
       - `VITE_TURNSTILE_VERIFY_URL` = `https://turnstile-siteverify-finance-v3.ranggadhisesa.workers.dev`
       - `VITE_TURNSTILE_GATE_TTL_DAYS` = `30`
-      - `VITE_BACKEND_URL` = URL publik backend Express (mis. `https://api.domain-anda.com`).
-        **KOSONGKAN dulu** bila backend belum deploy — bila diisi tapi backend
-        mati/tak terjangkau, login akan fail-closed (tidak bisa masuk).
+      - **Hapus** `VITE_SUPABASE_URL` dan `VITE_SUPABASE_ANON_KEY` — frontend tidak
+        lagi mengakses database langsung. Bila `VITE_BACKEND_URL` salah atau backend
+        mati, login akan fail-closed (tidak bisa masuk).
     - **Hapus** variabel lama yang sudah tidak dipakai: `VITE_PRASASTI_API_URL`,
       `VITE_SESSION_IDLE_MINUTES`, `VITE_SESSION_MAX_MINUTES`.
 
@@ -116,15 +115,14 @@ Setelah deploy, pastikan semua environment variables sudah di-set:
    - Klik project → **Settings** → **Environment variables**
    - Tambahkan:
      ```
-     VITE_SUPABASE_URL=https://...
-     VITE_SUPABASE_ANON_KEY=...
+     VITE_BACKEND_URL=https://backend-finance.prasastigroup.id
      VITE_R2_WORKER_URL=https://wasabi-upload-worker.workers.dev
      ```
 
 2. **Via Wrangler CLI** (Alternative)
    ```bash
    wrangler pages project create finance-prasasti
-   wrangler pages secret put VITE_SUPABASE_URL
+   wrangler pages secret put VITE_BACKEND_URL
    ```
 
 ## Step 5: Automatic Deployments
