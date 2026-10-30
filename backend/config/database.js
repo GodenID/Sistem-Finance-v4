@@ -1,8 +1,14 @@
 const { Pool } = require('pg');
 
+// DATABASE_SSL override: Postgres internal Coolify tidak pakai TLS, sedangkan
+// Supabase/DB publik butuh TLS. Tanpa override, perilaku lama tetap dipakai.
+const sslEnabled = process.env.DATABASE_SSL
+    ? process.env.DATABASE_SSL === 'true'
+    : process.env.NODE_ENV === 'production';
+
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+    ssl: sslEnabled ? { rejectUnauthorized: false } : false
 });
 
 // Test connection

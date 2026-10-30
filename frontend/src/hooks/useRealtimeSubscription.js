@@ -1,41 +1,94 @@
 /**
- * Custom hook for Supabase Realtime subscriptions
- * Enables real-time updates without page refresh
+ * Realtime tanpa Supabase Realtime.
  *
- * FIX #5: channel dipakai BERSAMA per tabel (module registry + refcount).
- * Sebelumnya tiap useRealtimeSubscription() membuka websocket channel sendiri
- * (4 di notifikasi + 1 per halaman = ~9 channel) — sekarang maks 1 per tabel
- * tidak peduli berapa komponen berlangganan.
+ * Dulu hook ini membuka channel `postgres_changes` ke Supabase. Setelah
+ * database pindah ke Postgres biasa, perubahan tabel dipantau dengan polling
+ * revisi ringan (counter pg_stat_user_tables) lewat backend.
+ *
+ * Kontrak pemakaian tidak berubah: satu channel per tabel, refcount, dan
+ * callback onAnyChange dipanggil saat revisi tabel berubah.
  */
 import { useEffect, useRef } from 'react';
-import { supabase } from '../lib/supabase';
 import logger from '../lib/logger';
 
-// Registry: table -> { channel, refCount, subscribers: Set<handlers> }
+const BACKEND_URL = (import.meta.env?.VITE_BACKEND_URL || '').replace(/\/$/, '');
+const POLL_INTERVAL_MS = 15000;
+
 const tableChannels = new Map();
 
-const dispatch = (table, eventType, a, b) => {
+let pollTimer = null;
+
+const authHeaders = () => {
+    try {
+        const token = localStorage.getItem('authToken');
+        return token ? { Authorization: `Bearer ${token}` } : {};
+    } catch {
+        return {};
+    }
+};
+
+const fetchRevision = async (table) => {
+    if (!BACKEND_URL) return null;
+    try {
+        const response = await fetch(`${BACKEND_URL}/api/data/${table}/changes`, { headers: authHeaders() });
+        if (!response.ok) return null;
+        const body = await response.json();
+        return body?.data?.revision ?? null;
+    } catch {
+        return null;
+    }
+};
+
+const dispatch = (table) => {
     const entry = tableChannels.get(table);
     if (!entry) return;
-    entry.subscribers.forEach(({ onInsert, onUpdate, onDelete, onAnyChange }) => {
+    entry.subscribers.forEach((handlers) => {
         try {
-            if (eventType === 'INSERT') {
-                logger.realtime(table, 'INSERT', a);
-                if (onInsert) onInsert(a);
-                if (onAnyChange) onAnyChange('INSERT', a);
-            } else if (eventType === 'UPDATE') {
-                logger.realtime(table, 'UPDATE', a);
-                if (onUpdate) onUpdate(a, b);
-                if (onAnyChange) onAnyChange('UPDATE', a, b);
-            } else if (eventType === 'DELETE') {
-                logger.realtime(table, 'DELETE', b);
-                if (onDelete) onDelete(b);
-                if (onAnyChange) onAnyChange('DELETE', null, b);
-            }
-        } catch (err) {
-            console.error(`Realtime handler error (${table} ${eventType}):`, err);
+            handlers.onAnyChange?.('REFRESH', null, null);
+        } catch (error) {
+            console.error(`Realtime handler error (${table}):`, error);
         }
     });
+};
+
+const pollTable = async (table) => {
+    const entry = tableChannels.get(table);
+    if (!entry) return;
+    const revision = await fetchRevision(table);
+    if (revision === null) return;
+    if (entry.revision === null) {
+        entry.revision = revision;
+        return;
+    }
+    if (revision !== entry.revision) {
+        entry.revision = revision;
+        logger.realtime(table, 'CHANGE', { revision });
+        dispatch(table);
+    }
+};
+
+const pollAll = () => {
+    if (typeof document !== 'undefined' && document.hidden) return;
+    for (const table of tableChannels.keys()) {
+        pollTable(table);
+    }
+};
+
+const startPolling = () => {
+    if (pollTimer) return;
+    pollTimer = setInterval(pollAll, POLL_INTERVAL_MS);
+    if (typeof document !== 'undefined') {
+        document.addEventListener('visibilitychange', pollAll);
+    }
+};
+
+const stopPolling = () => {
+    if (!pollTimer) return;
+    clearInterval(pollTimer);
+    pollTimer = null;
+    if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', pollAll);
+    }
 };
 
 const ensureChannel = (table) => {
@@ -45,17 +98,10 @@ const ensureChannel = (table) => {
         return entry;
     }
 
-    const channel = supabase
-        .channel(`realtime-${table}`)
-        .on('postgres_changes', { event: 'INSERT', schema: 'public', table }, (p) => dispatch(table, 'INSERT', p.new))
-        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table }, (p) => dispatch(table, 'UPDATE', p.new, p.old))
-        .on('postgres_changes', { event: 'DELETE', schema: 'public', table }, (p) => dispatch(table, 'DELETE', null, p.old))
-        .subscribe((status) => {
-            logger.realtime(table, 'SUBSCRIBE', { status });
-        });
-
-    entry = { channel, refCount: 1, subscribers: new Set() };
+    entry = { refCount: 1, subscribers: new Set(), revision: null };
     tableChannels.set(table, entry);
+    startPolling();
+    pollTable(table);
     return entry;
 };
 
@@ -66,34 +112,25 @@ const releaseChannel = (table, handlers) => {
     entry.refCount -= 1;
     if (entry.refCount <= 0) {
         logger.realtime(table, 'UNSUBSCRIBE');
-        supabase.removeChannel(entry.channel);
         tableChannels.delete(table);
     }
+    if (tableChannels.size === 0) stopPolling();
 };
 
 /**
- * Hook to subscribe to realtime changes on a table
- * @param {string} table - The table name to subscribe to
- * @param {function} onInsert - Callback when a new record is inserted
- * @param {function} onUpdate - Callback when a record is updated
- * @param {function} onDelete - Callback when a record is deleted
- * @param {boolean} enabled - Whether the subscription is enabled
+ * Subscribe ke perubahan sebuah tabel.
+ * @param {string} table - nama tabel
+ * @param {{onInsert?:Function,onUpdate?:Function,onDelete?:Function,onAnyChange?:Function}} handlers
+ * @param {boolean} enabled - apakah subscription aktif
  */
-export const useRealtimeSubscription = (
-    table,
-    { onInsert, onUpdate, onDelete, onAnyChange },
-    enabled = true
-) => {
-    // Selalu pegang versi terbaru agar dispatch memakai closure fresh
-    // tanpa membuka channel baru (deps effect tetap [table, enabled]).
-    const handlersRef = useRef({ onInsert, onUpdate, onDelete, onAnyChange });
-    handlersRef.current = { onInsert, onUpdate, onDelete, onAnyChange };
+export const useRealtimeSubscription = (table, handlers, enabled = true) => {
+    const handlersRef = useRef(handlers);
+    handlersRef.current = handlers;
 
     useEffect(() => {
         if (!enabled) return;
 
         const entry = ensureChannel(table);
-        // Subscriber stabil yang meneruskan ke ref terbaru
         const subscriber = {
             onInsert: (...a) => handlersRef.current.onInsert?.(...a),
             onUpdate: (...a) => handlersRef.current.onUpdate?.(...a),

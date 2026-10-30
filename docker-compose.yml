@@ -79,8 +79,6 @@ services:
         # WAJIB agar login pakai sesi JWT terverifikasi server (No.3).
         # Isi URL publik backend, mis. https://api.domain-anda.com
         VITE_BACKEND_URL: ${VITE_BACKEND_URL:-}
-        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-https://db-finance.prasastigroup.id}
-        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
         VITE_PRASASTI_API_URL: ${VITE_PRASASTI_API_URL:-https://guard.prasastigroup.id}
         VITE_R2_WORKER_URL: ${VITE_R2_WORKER_URL:-}
         VITE_EMAIL_NOTIFICATION_URL: ${VITE_EMAIL_NOTIFICATION_URL:-}

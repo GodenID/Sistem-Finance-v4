@@ -97,18 +97,11 @@ export const ensureCanMutate = () => {
 export const checkSupabaseHealth = async () => {
     const startTime = performance.now();
     try {
-        const { error } = await supabase
-            .from('app_settings')
-            .select('key')
-            .limit(1)
-            .single();
-
+        const response = await fetch(`${BACKEND_URL}/api/health`);
         const latency = Math.round(performance.now() - startTime);
-
-        if (error) {
-            return { status: 'down', latency, error: error.message };
+        if (!response.ok) {
+            return { status: 'down', latency, error: `HTTP ${response.status}` };
         }
-
         return { status: 'up', latency };
     } catch (err) {
         const latency = Math.round(performance.now() - startTime);

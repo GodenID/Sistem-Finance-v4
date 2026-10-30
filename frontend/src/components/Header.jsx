@@ -140,7 +140,7 @@ const Header = ({ toggleSidebar }) => {
                 {health.error && (
                   <p className="text-xs text-rose-500 mt-1">{health.error}</p>
                 )}
-                <p className="text-xs text-gray-400 mt-2">Supabase Database</p>
+                <p className="text-xs text-gray-400 mt-2">Database Server</p>
               </div>
             )}
           </div>

@@ -38,6 +38,7 @@ app.use('/api/activity-logs', require('./routes/activityLogs'));
 app.use('/api/upload', require('./routes/upload'));
 app.use('/api/recurring-transactions', require('./routes/recurringTransactions'));
 app.use('/api/recurring-instances', require('./routes/recurringInstances'));
+app.use('/api/data', require('./routes/data'));
 
 // Error handling middleware
 app.use((err, req, res, next) => {

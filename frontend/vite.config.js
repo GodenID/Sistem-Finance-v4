@@ -24,7 +24,7 @@ export default defineConfig({
           // bukan ikut vendor-utils yang dimuat di awal rute.
           'vendor-utils': ['jspdf', 'jszip', 'file-saver'],
           // Backend/Data handling
-          'vendor-data': ['@supabase/supabase-js', 'axios']
+          'vendor-data': ['axios']
         }
       }
     }

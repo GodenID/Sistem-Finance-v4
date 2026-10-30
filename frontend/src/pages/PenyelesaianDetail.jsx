@@ -157,7 +157,8 @@ const PenyelesaianDetail = () => {
                     const nowIso = new Date().toISOString();
                     await updateRecord('penyelesaian', penyelesaian.id, {
                         status_approval: 'Manager Approved',
-                        disetujui_oleh: userName || 'Manager',
+                        // disetujui_oleh bertipe UUID (FK users.id) — kirim userId, bukan nama
+                        disetujui_oleh: userId || null,
                         nama_approver: userName || 'Manager',
                         manager_approved_by: userName || 'Manager',
                         manager_approved_at: nowIso
@@ -233,7 +234,8 @@ const PenyelesaianDetail = () => {
                     const nowIso = new Date().toISOString();
                     await updateRecord('penyelesaian', penyelesaian.id, {
                         status_approval: 'Rejected',
-                        disetujui_oleh: userName || 'Manager',
+                        // disetujui_oleh bertipe UUID (FK users.id) — kirim userId, bukan nama
+                        disetujui_oleh: userId || null,
                         nama_approver: userName || 'Manager',
                         rejected_by: userName || 'Manager',
                         rejected_at: nowIso
