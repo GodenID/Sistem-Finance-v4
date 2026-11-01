@@ -12,7 +12,7 @@ const WORKER_URL = import.meta.env.VITE_R2_WORKER_URL;
 if (!WORKER_URL || WORKER_URL.includes('your-account')) {
   console.error('❌ VITE_R2_WORKER_URL belum di-set atau masih menggunakan placeholder!');
   console.error('💡 Silakan set VITE_R2_WORKER_URL di file .env dengan URL Worker Anda');
-  console.error('💡 Contoh: VITE_R2_WORKER_URL=https://r2-upload-worker.your-account.workers.dev');
+  console.error('💡 Contoh: VITE_R2_WORKER_URL=https://upload.prasastigroup.id');
 }
 
 // Kunci hapus file (opsional — samakan dengan DELETE_SECRET di env worker).

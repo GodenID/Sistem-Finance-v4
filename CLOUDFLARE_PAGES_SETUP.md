@@ -57,10 +57,12 @@ Cloudflare Pages adalah platform hosting gratis untuk aplikasi frontend statis (
 6. **Environment Variables** (dibakar saat build — wajib Redeploy tiap ubah)
     - Klik **"Add variable"** untuk setiap environment variable, untuk **Production** (dan Preview bila perlu):
       - `VITE_BACKEND_URL` = `https://backend-finance.prasastigroup.id` (URL publik backend Express)
-      - `VITE_R2_WORKER_URL` = `https://finance-v3-upload.ranggadhisesa.workers.dev`
-      - `VITE_EMAIL_NOTIFICATION_URL` = `https://finance-v3-email.ranggadhisesa.workers.dev`
+      - `VITE_R2_WORKER_URL` = `https://upload.prasastigroup.id` (worker upload ke S3 Onidel)
+      - `VITE_EMAIL_NOTIFICATION_URL` = `https://notify.prasastigroup.id`
       - `VITE_TURNSTILE_SITEKEY` = `0x4AAAAAAE1FPMavLq99krrk`
-      - `VITE_TURNSTILE_VERIFY_URL` = `https://turnstile-siteverify-finance-v3.ranggadhisesa.workers.dev`
+      - `VITE_TURNSTILE_VERIFY_URL` = `https://turnstile.prasastigroup.id`
+      - Jangan pakai domain `*.workers.dev`: sebagian ISP Indonesia memblokirnya
+        (TLS diputus), sehingga upload dan verifikasi Turnstile gagal.
       - `VITE_TURNSTILE_GATE_TTL_DAYS` = `30`
       - **Hapus** `VITE_SUPABASE_URL` dan `VITE_SUPABASE_ANON_KEY` — frontend tidak
         lagi mengakses database langsung. Bila `VITE_BACKEND_URL` salah atau backend
@@ -116,7 +118,7 @@ Setelah deploy, pastikan semua environment variables sudah di-set:
    - Tambahkan:
      ```
      VITE_BACKEND_URL=https://backend-finance.prasastigroup.id
-     VITE_R2_WORKER_URL=https://wasabi-upload-worker.workers.dev
+     VITE_R2_WORKER_URL=https://upload.prasastigroup.id
      ```
 
 2. **Via Wrangler CLI** (Alternative)
