@@ -63,7 +63,7 @@ peringatan di log — tidak ditolak, supaya upload tidak gagal karena data lama.
 | Metode | Path | Fungsi |
 | --- | --- | --- |
 | `POST` | `/` | multipart `file`, `documentType`, `documentId`, `userName` → `{ url, filePath, ... }` |
-| `GET` | `/<key>` | proxy baca objek dari S3 |
+| `GET` | `/<key>` | proxy baca objek dari S3, fallback ke R2 bila objek tidak ada di S3 |
 | `GET` | `/__list?prefix=&limit=&cursor=` | daftar objek (sweeper file yatim) |
 | `DELETE` | `/?key=<key>` | hapus objek |
 
@@ -83,12 +83,31 @@ npx wrangler deploy --config wrangler.toml
 Konfigurasi ada di `cloudflare-worker/wrangler.toml` (worker: `s3-upload.js`).
 Worker R2 lama (`r2-upload-simple.js`) disimpan hanya sebagai referensi.
 
+Variabel di worker:
+
+| Nama | Isi |
+| --- | --- |
+| `S3_ENDPOINT` | `https://s3.ap-southeast-1.onidel.cloud` |
+| `S3_REGION` | `ap-southeast-1` |
+| `S3_BUCKET` | `finance` |
+| `S3_PUBLIC_URL` | `https://s3.ap-southeast-1.onidel.cloud/finance` |
+| `LEGACY_PUBLIC_URL` | `https://files.prasastigroup.id` (fallback baca file lama) |
+
+## File lama
+
+Lampiran lama tetap di R2 dengan alamat `https://files.prasastigroup.id/<key>`,
+dan alamat itu masih 200. Domain R2 tidak mengirim header CORS, jadi browser
+tidak bisa `fetch` langsung. Karena itu `GET /<key>` pada worker mencoba S3
+lebih dulu; bila S3 menjawab 404/403, worker mengambil dari `LEGACY_PUBLIC_URL`
+lalu mengirim ulang dengan header CORS. Fitur backup dan ekspor PDF memakai
+jalur ini, jadi lampiran lama tetap ikut.
+
 ## Catatan
 
 - `DELETE_SECRET` belum diset, jadi endpoint hapus terbuka. Isi secret itu lalu
   samakan dengan `VITE_R2_DELETE_KEY` bila ingin hapus file diproteksi.
 - Menghapus lampiran lama (URL `files.prasastigroup.id`) lewat worker baru tidak
-  menghapus objek R2-nya: worker hanya menyentuh bucket S3. Objek R2 lama
+  menghapus objek R2-nya: endpoint hapus hanya menyentuh bucket S3. Objek R2 lama
   dibiarkan, sesuai keputusan menyimpan berkas lama apa adanya.
 - Bucket `finance` bersifat public-read. Siapa pun yang tahu URL bisa membuka
   file. Nama file memuat timestamp dan 8 karakter acak, jadi tidak mudah ditebak.

@@ -298,23 +298,48 @@ export default {
       }
     }
 
-    // Proxy baca objek.
+    // Proxy baca objek. Objek baru ada di S3; lampiran lama ada di R2, jadi bila
+    // S3 menjawab 404/403, worker meneruskan permintaan ke domain R2 lama.
+    // Dengan begitu URL lama tetap bisa dipakai lewat proxy (butuh CORS untuk
+    // backup dan ekspor PDF, yang tidak disediakan domain R2 langsung).
     if (request.method === 'GET') {
       const key = normalizeKey(url.pathname.slice(1), cfg.bucket);
       if (!key) return json({ error: 'File path required' }, 400);
       try {
         const response = await s3Fetch(cfg, env, { method: 'GET', key });
-        if (!response.ok) {
-          return json({ error: 'File not found' }, response.status === 404 ? 404 : 502);
+
+        if (response.ok) {
+          const headers = new Headers(corsHeaders);
+          const contentType = response.headers.get('content-type');
+          const etag = response.headers.get('etag');
+          if (contentType) headers.set('Content-Type', contentType);
+          if (etag) headers.set('ETag', etag);
+          const length = response.headers.get('content-length');
+          if (length) headers.set('Content-Length', length);
+          return new Response(response.body, { headers });
         }
-        const headers = new Headers(corsHeaders);
-        const contentType = response.headers.get('content-type');
-        const etag = response.headers.get('etag');
-        if (contentType) headers.set('Content-Type', contentType);
-        if (etag) headers.set('ETag', etag);
-        const length = response.headers.get('content-length');
-        if (length) headers.set('Content-Length', length);
-        return new Response(response.body, { headers });
+
+        const status = response.status;
+        if (status !== 404 && status !== 403) {
+          return json({ error: `Gagal membaca file (${status})` }, 502);
+        }
+
+        const legacyBase = String(env.LEGACY_PUBLIC_URL || '').replace(/\/$/, '');
+        if (legacyBase) {
+          const legacy = await fetch(`${legacyBase}/${encodeKey(key)}`);
+          if (legacy.ok) {
+            const headers = new Headers(corsHeaders);
+            const contentType = legacy.headers.get('content-type');
+            const etag = legacy.headers.get('etag');
+            if (contentType) headers.set('Content-Type', contentType);
+            if (etag) headers.set('ETag', etag);
+            const length = legacy.headers.get('content-length');
+            if (length) headers.set('Content-Length', length);
+            return new Response(legacy.body, { headers });
+          }
+        }
+
+        return json({ error: 'File not found' }, 404);
       } catch (error) {
         console.error('Error ambil file S3:', error);
         return json({ error: error.message }, 500);
