@@ -226,23 +226,7 @@ export const countRecords = async (table, filters = {}) => {
     return count || 0;
 };
 
-/**
- * Ambil ringkasan status (total/pending/approved/rejected) via 4x HEAD count.
- * Jauh lebih ringan daripada download semua row lalu .filter() di browser.
- * Dipakai Dashboard & kartu statistik list.
- */
-export const getStatusCounts = async (table, statusField = 'status_approval') => {
-    const [total, pending, managerApproved, approved, rejected] = await Promise.all([
-        countRecords(table),
-        countRecords(table, { [statusField]: 'Pending' }),
-        countRecords(table, { [statusField]: 'Manager Approved' }),
-        countRecords(table, { [statusField]: 'Approved' }),
-        countRecords(table, { [statusField]: 'Rejected' }),
-    ]);
-    return { total, pending, managerApproved, manager_approved: managerApproved, approved, rejected };
-};
-
-const normalizeRpcCount = (node) => ({
+const normalizeCount = (node) => ({
     total: Number(node?.total || 0),
     pending: Number(node?.pending || 0),
     managerApproved: Number(node?.manager_approved || 0),
@@ -252,35 +236,32 @@ const normalizeRpcCount = (node) => ({
 });
 
 /**
- * Seluruh angka Dashboard dalam 1 round-trip via RPC get_dashboard_counts
- * (migration: supabase/migrations/add_dashboard_count_rpc.sql).
- * - Cache 30 detik: navigasi bolak-balik terasa instan.
- * - Fallback otomatis ke 4x getStatusCounts bila RPC belum dimigrasi.
- * Format: { payment_requests, kasbon, klaim, penyelesaian } masing-masing
- * { total, pending, approved, rejected }.
+ * Ringkasan Dashboard dalam 1 round-trip: hitungan status semua menu plus
+ * tren 7 hari terakhir. Sebelumnya 1 RPC counts + 3 query tren terpisah,
+ * masing-masing dengan preflight CORS sendiri.
+ * Cache 30 detik: navigasi bolak-balik terasa instan, data tetap segar.
  */
-export const getDashboardCounts = async () => {
-    return cachedQuery('dashboard:counts', 30000, async () => {
-        try {
-            const { data, error } = await supabase.rpc('get_dashboard_counts');
-            if (error) throw error;
-            if (!data) throw new Error('RPC kosong');
-            return {
-                payment_requests: normalizeRpcCount(data.payment_requests),
-                kasbon: normalizeRpcCount(data.kasbon),
-                klaim: normalizeRpcCount(data.klaim),
-                penyelesaian: normalizeRpcCount(data.penyelesaian),
-            };
-        } catch {
-            // Fallback: cara lama (16 request) bila RPC belum ada di DB
-            const [payment_requests, kasbon, klaim, penyelesaian] = await Promise.all([
-                getStatusCounts('payment_requests'),
-                getStatusCounts('kasbon'),
-                getStatusCounts('klaim'),
-                getStatusCounts('penyelesaian'),
-            ]);
-            return { payment_requests, kasbon, klaim, penyelesaian };
-        }
+export const getDashboardSummary = async (sinceISO = null) => {
+    const since = sinceISO || new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    return cachedQuery(`dashboard:summary:${since.slice(0, 10)}`, 30000, async () => {
+        const payload = await backendFetch(
+            `/api/data/dashboard-summary?since=${encodeURIComponent(since)}`,
+            { token: getAuthToken() }
+        );
+        const data = payload?.data || {};
+        return {
+            counts: {
+                payment_requests: normalizeCount(data.counts?.payment_requests),
+                kasbon: normalizeCount(data.counts?.kasbon),
+                klaim: normalizeCount(data.counts?.klaim),
+                penyelesaian: normalizeCount(data.counts?.penyelesaian),
+            },
+            trends: {
+                payment_requests: data.trends?.payment_requests || [],
+                kasbon: data.trends?.kasbon || [],
+                klaim: data.trends?.klaim || [],
+            },
+        };
     });
 };
 

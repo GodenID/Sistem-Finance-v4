@@ -13,7 +13,7 @@ import {
   PieChart as PieChartIcon
 } from 'lucide-react';
 import CompanyInfoModal from './CompanyInfoModal';
-import { getDashboardCounts, getLightweightRows, cachedQuery } from '../lib/api';
+import { getDashboardSummary } from '../lib/api';
 import {
   AreaChart,
   Area,
@@ -48,49 +48,37 @@ const Dashboard = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [trendsLoading, setTrendsLoading] = useState(true);
 
-  // Fetch data dari Supabase — DUA JALUR independen (render progresif):
-  //  1. Jalur cepat: 1x RPC get_dashboard_counts (cache 30 dtk) untuk kartu,
-  //     pie, bar, dan banner. Halaman terasa terisi dalam ~1 round-trip.
-  //  2. Jalur grafik: 3x baris ringan tren 7 hari, TIDAK memblokir kartu.
+  // Fetch data dari backend — SATU request untuk semua angka + tren.
+  // Endpoint /api/data/dashboard-summary menggabungkan hitungan status
+  // (4 menu) dan tren 7 hari (3 tabel) dalam satu query JSON.
   useEffect(() => {
     let cancelled = false;
 
-    getDashboardCounts()
-      .then((all) => {
-        if (cancelled) return;
-        setStats({
-          paymentRequest: all.payment_requests,
-          kasbon: all.kasbon,
-          klaim: all.klaim,
-          penyelesaian: all.penyelesaian,
-        });
-      })
-      .catch((error) => console.error('Error fetching dashboard counts:', error))
-      .finally(() => { if (!cancelled) setIsLoading(false); });
-
     const weekAgo = new Date();
     weekAgo.setDate(weekAgo.getDate() - 7);
-    const sinceISO = weekAgo.toISOString();
-    // Kunci cache per hari agar tren stabil sepanjang hari
-    const dayKey = new Date().toISOString().slice(0, 10);
-    const trendOf = (table) =>
-      cachedQuery(`dashboard:trend:${table}:${dayKey}`, 60000, () =>
-        getLightweightRows(table, { columns: 'id,created_at', since: sinceISO, limit: 2000 })
-      );
 
-    setTrendsLoading(true);
-    Promise.all([trendOf('payment_requests'), trendOf('kasbon'), trendOf('klaim')])
-      .then(([prTrend, kasbonTrend, klaimTrend]) => {
+    getDashboardSummary(weekAgo.toISOString())
+      .then((summary) => {
         if (cancelled) return;
+        setStats({
+          paymentRequest: summary.counts.payment_requests,
+          kasbon: summary.counts.kasbon,
+          klaim: summary.counts.klaim,
+          penyelesaian: summary.counts.penyelesaian,
+        });
         setRawData({
-          paymentRequests: prTrend || [],
-          kasbon: kasbonTrend || [],
-          klaim: klaimTrend || [],
+          paymentRequests: summary.trends.payment_requests,
+          kasbon: summary.trends.kasbon,
+          klaim: summary.trends.klaim,
           penyelesaian: []
         });
       })
-      .catch((error) => console.error('Error fetching dashboard trends:', error))
-      .finally(() => { if (!cancelled) setTrendsLoading(false); });
+      .catch((error) => console.error('Error fetching dashboard summary:', error))
+      .finally(() => {
+        if (cancelled) return;
+        setIsLoading(false);
+        setTrendsLoading(false);
+      });
 
     return () => { cancelled = true; };
   }, []);

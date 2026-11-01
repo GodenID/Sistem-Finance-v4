@@ -27,13 +27,16 @@ const authHeaders = () => {
     }
 };
 
-const fetchRevision = async (table) => {
+const fetchRevisions = async () => {
     if (!BACKEND_URL) return null;
     try {
-        const response = await fetch(`${BACKEND_URL}/api/data/${table}/changes`, { headers: authHeaders() });
+        const response = await fetch(`${BACKEND_URL}/api/data/revisions`, {
+            headers: authHeaders(),
+            cache: 'no-store',
+        });
         if (!response.ok) return null;
         const body = await response.json();
-        return body?.data?.revision ?? null;
+        return body?.data || null;
     } catch {
         return null;
     }
@@ -51,27 +54,42 @@ const dispatch = (table) => {
     });
 };
 
-const pollTable = async (table) => {
-    const entry = tableChannels.get(table);
-    if (!entry) return;
-    const revision = await fetchRevision(table);
-    if (revision === null) return;
-    if (entry.revision === null) {
-        entry.revision = revision;
-        return;
-    }
-    if (revision !== entry.revision) {
-        entry.revision = revision;
-        logger.realtime(table, 'CHANGE', { revision });
-        dispatch(table);
+let pollInFlight = false;
+let pollScheduled = false;
+
+const pollAll = async () => {
+    if (typeof document !== 'undefined' && document.hidden) return;
+    if (!tableChannels.size || pollInFlight) return;
+
+    pollInFlight = true;
+    const revisions = await fetchRevisions();
+    pollInFlight = false;
+    if (!revisions) return;
+
+    for (const [table, entry] of tableChannels) {
+        const revision = revisions[table];
+        if (revision === undefined) continue;
+        const value = String(revision);
+        if (entry.revision === null) {
+            entry.revision = value;
+            continue;
+        }
+        if (value !== entry.revision) {
+            entry.revision = value;
+            logger.realtime(table, 'CHANGE', { revision: value });
+            dispatch(table);
+        }
     }
 };
 
-const pollAll = () => {
-    if (typeof document !== 'undefined' && document.hidden) return;
-    for (const table of tableChannels.keys()) {
-        pollTable(table);
-    }
+/** Gabungkan beberapa subscribe dalam satu tick jadi satu request. */
+const schedulePoll = () => {
+    if (pollScheduled) return;
+    pollScheduled = true;
+    Promise.resolve().then(() => {
+        pollScheduled = false;
+        pollAll();
+    });
 };
 
 const startPolling = () => {
@@ -101,7 +119,7 @@ const ensureChannel = (table) => {
     entry = { refCount: 1, subscribers: new Set(), revision: null };
     tableChannels.set(table, entry);
     startPolling();
-    pollTable(table);
+    schedulePoll();
     return entry;
 };
 

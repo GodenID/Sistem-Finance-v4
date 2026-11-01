@@ -32,7 +32,10 @@ app.use(cors({
         );
         return allowed ? callback(null, true) : callback(null, false);
     },
-    credentials: true
+    credentials: true,
+    // Cache hasil preflight 10 menit. Tanpa ini setiap panggilan API membayar
+    // dua round-trip (OPTIONS lalu GET) — paling terasa di jaringan lambat.
+    maxAge: 600
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

@@ -222,6 +222,92 @@ router.get('/rpc/dashboard-counts', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Revisi semua tabel sekaligus, untuk polling realtime 1 request per interval
+// (sebelumnya 1 request per tabel).
+// ---------------------------------------------------------------------------
+router.get('/revisions', async (req, res) => {
+    try {
+        const tables = [...ALLOWED_TABLES];
+        const result = await db.query(
+            `SELECT relname,
+                    COALESCE(n_tup_ins, 0) + COALESCE(n_tup_upd, 0) + COALESCE(n_tup_del, 0) AS revision
+               FROM pg_stat_user_tables
+              WHERE schemaname = 'public' AND relname = ANY($1::text[])`,
+            [tables]
+        );
+        const data = Object.fromEntries(tables.map((table) => [table, '0']));
+        for (const row of result.rows) data[row.relname] = String(row.revision);
+        res.set('Cache-Control', 'no-store');
+        res.json({ data, error: null });
+    } catch (error) {
+        if (!error.status || error.status >= 500) console.error('Table revisions error:', error);
+        res.status(500).json({ data: null, error: { message: 'Gagal membaca revisi tabel' } });
+    }
+});
+
+// ---------------------------------------------------------------------------
+// Ringkasan Dashboard dalam 1 query: hitungan status + tren 7 hari.
+// Menggantikan RPC counts + 3 query tren terpisah dari frontend.
+// ---------------------------------------------------------------------------
+const DASHBOARD_COUNT_TABLES = ['payment_requests', 'kasbon', 'klaim', 'penyelesaian'];
+const DASHBOARD_TREND_TABLES = ['payment_requests', 'kasbon', 'klaim'];
+const DASHBOARD_TREND_LIMIT = 2000;
+const DASHBOARD_TREND_DAYS = 7;
+
+const dashboardCountExpr = (table) => `(
+    SELECT jsonb_build_object(
+        'total', COUNT(*),
+        'pending', COUNT(*) FILTER (WHERE status_approval = 'Pending'),
+        'approved', COUNT(*) FILTER (WHERE status_approval = 'Approved'),
+        'rejected', COUNT(*) FILTER (WHERE status_approval = 'Rejected')
+    ) FROM ${ident(table)}
+)`;
+
+const dashboardTrendExpr = (table) => `(
+    SELECT COALESCE(
+        jsonb_agg(jsonb_build_object('id', id, 'created_at', created_at) ORDER BY created_at DESC),
+        '[]'::jsonb
+    )
+      FROM (
+        SELECT id, created_at
+          FROM ${ident(table)}
+         WHERE created_at >= $1::timestamptz
+         ORDER BY created_at DESC
+         LIMIT ${DASHBOARD_TREND_LIMIT}
+      ) AS recent
+)`;
+
+router.get('/dashboard-summary', async (req, res) => {
+    try {
+        const rawSince = String(req.query.since || '').trim();
+        const parsedSince = rawSince ? new Date(rawSince) : null;
+        const sinceISO = parsedSince && !Number.isNaN(parsedSince.getTime())
+            ? parsedSince.toISOString()
+            : new Date(Date.now() - DASHBOARD_TREND_DAYS * 24 * 60 * 60 * 1000).toISOString();
+
+        const counts = DASHBOARD_COUNT_TABLES
+            .map((table) => `'${table}', ${dashboardCountExpr(table)}`)
+            .join(', ');
+        const trends = DASHBOARD_TREND_TABLES
+            .map((table) => `'${table}', ${dashboardTrendExpr(table)}`)
+            .join(', ');
+
+        const result = await db.query(
+            `SELECT jsonb_build_object(
+                'counts', jsonb_build_object(${counts}),
+                'trends', jsonb_build_object(${trends})
+            ) AS data`,
+            [sinceISO]
+        );
+        res.set('Cache-Control', 'no-store');
+        res.json({ data: result.rows[0].data, error: null });
+    } catch (error) {
+        if (!error.status || error.status >= 500) console.error('Dashboard summary error:', error);
+        res.status(500).json({ data: null, error: { message: 'Gagal menghitung ringkasan dashboard' } });
+    }
+});
+
+// ---------------------------------------------------------------------------
 // Revisi tabel untuk polling realtime (pengganti Supabase Realtime)
 // ---------------------------------------------------------------------------
 router.get('/:table/changes', async (req, res) => {

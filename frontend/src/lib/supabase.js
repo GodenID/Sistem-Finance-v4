@@ -210,11 +210,6 @@ class QueryBuilder {
     }
 }
 
-const unsupportedRpc = (name) => ({
-    data: null,
-    error: toError(`RPC tidak didukung: ${name}`),
-});
-
 const channelStub = () => {
     const channel = {
         on: () => channel,
@@ -229,24 +224,6 @@ const channelStub = () => {
 
 export const supabase = {
     from: (table) => new QueryBuilder(table),
-    rpc: async (name) => {
-        if (name === 'get_dashboard_counts') {
-            try {
-                const token = authToken();
-                const response = await fetch(`${BACKEND_URL}/api/data/rpc/dashboard-counts`, {
-                    headers: token ? { Authorization: `Bearer ${token}` } : {},
-                });
-                const body = await response.json().catch(() => ({}));
-                if (!response.ok) {
-                    return { data: null, error: toError(body?.error?.message || 'RPC gagal') };
-                }
-                return { data: body.data, error: null };
-            } catch (error) {
-                return { data: null, error: toError(error.message) };
-            }
-        }
-        return unsupportedRpc(name);
-    },
     channel: () => channelStub(),
     removeChannel: () => Promise.resolve('ok'),
     removeAllChannels: () => Promise.resolve('ok'),
