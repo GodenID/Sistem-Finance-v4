@@ -32,7 +32,6 @@ const fetchRevisions = async () => {
     try {
         const response = await fetch(`${BACKEND_URL}/api/data/revisions`, {
             headers: authHeaders(),
-            cache: 'no-store',
         });
         if (!response.ok) return null;
         const body = await response.json();
