@@ -17,10 +17,8 @@ import {
   HardDrive,
   Activity,
   BookOpen,
-  Repeat,
   Wrench,
-  ImageIcon,
-  Archive
+  ImageIcon
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useAppVersion } from '../lib/version';
@@ -78,11 +76,6 @@ const Sidebar = ({ isOpen, setIsOpen }) => {
     menuItems.push({ icon: HardDrive, label: 'Backup', path: '/backup' });
   }
 
-  // Storage & file yatim hanya untuk administrator
-  if (canAccessKaryawan) {
-    menuItems.push({ icon: Archive, label: 'Storage', path: '/storage' });
-  }
-
   // Tambahkan menu Maintenance hanya untuk administrator
   if (canAccessKaryawan) {
     menuItems.push({ icon: Wrench, label: 'Maintenance', path: '/maintenance' });
@@ -91,11 +84,6 @@ const Sidebar = ({ isOpen, setIsOpen }) => {
   // Tambahkan menu Performance hanya untuk administrator
   if (canAccessKaryawan) {
     menuItems.push({ icon: Activity, label: 'Performance', path: '/performance' });
-  }
-
-  // Tambahkan menu Transaksi Berulang untuk admin dan finance (atau yg diberi permission)
-  if (can('manage_recurring', ['administrator', 'team_finance'])) {
-    menuItems.push({ icon: Repeat, label: 'Transaksi Berulang', path: '/recurring' });
   }
 
   // Tambahkan menu Changelog untuk semua user

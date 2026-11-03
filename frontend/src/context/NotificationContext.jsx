@@ -55,7 +55,7 @@ export const NotificationProvider = ({ children }) => {
 
   // Fetch notifications based on user role
   // FIX #3: query ringan per-role (kolom minimal + filter status di SERVER +
-  // limit 50), bukan 6x select('*') full. Recurring hanya untuk team_finance.
+  // limit 50), bukan 6x select('*') full.
   const fetchNotifications = useCallback(async () => {
     if (!isAuthenticated) {
       setNotifications([]);
@@ -97,8 +97,6 @@ export const NotificationProvider = ({ children }) => {
       let kasbonFin = [];
       let klaimFin = [];
       let penyelesaianFin = [];
-      let recurringInstancesData = [];
-      let recurringTemplatesData = [];
 
       if (isManagerApprover) {
         // Tahap 1: Pending -> notifikasi Manager (+ admin, BOD)
@@ -126,19 +124,6 @@ export const NotificationProvider = ({ children }) => {
           pick(supabase.from('klaim').select('id,nomor_klaim,nominal,created_at,status_approval,status_transfer').eq('status_approval', 'Approved').eq('status_transfer', 'Belum Transfer').order('created_at', { ascending: false }).limit(50)),
           pick(supabase.from('penyelesaian').select('id,nomor_penyelesaian,total_pengeluaran,total_nominal,created_at,status_approval,status_penyelesaian').eq('status_approval', 'Approved').order('created_at', { ascending: false }).limit(50)),
         ]);
-
-        // Transaksi berulang jatuh tempo — hanya finance yang butuh
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        recurringInstancesData = await pick(
-          supabase.from('recurring_instances').select('id,recurring_id,scheduled_date,status').eq('status', 'pending').lte('scheduled_date', today.toISOString()).order('scheduled_date', { ascending: true }).limit(50)
-        );
-        const templateIds = [...new Set((recurringInstancesData || []).map((i) => i.recurring_id).filter(Boolean))];
-        if (templateIds.length > 0) {
-          recurringTemplatesData = await pick(
-            supabase.from('recurring_transactions').select('id,name,template_data').in('id', templateIds)
-          );
-        }
       } else {
         // Role lain: tidak butuh antrean approval/transfer — kosongkan agar ringan.
         // Notifikasi personal (kasbon belum selesai + transfer milik sendiri) diisi di bawah.
@@ -311,32 +296,6 @@ export const NotificationProvider = ({ children }) => {
           });
         });
 
-        // Transaksi berulang yang jatuh tempo (hari ini atau sudah lewat)
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-
-        const dueRecurring = (recurringInstancesData || []).filter(instance => {
-          if (instance.status !== 'pending') return false;
-          const scheduledDate = new Date(instance.scheduled_date);
-          scheduledDate.setHours(0, 0, 0, 0);
-          return scheduledDate <= today;
-        });
-
-        dueRecurring.forEach(instance => {
-          // Find the template
-          const template = (recurringTemplatesData || []).find(t => t.id === instance.recurring_id);
-          const templateData = template?.template_data || {};
-
-          notifList.push({
-            id: instance.id,
-            type: 'recurring',
-            title: 'Transaksi Berulang Jatuh Tempo',
-            message: `${template?.name || 'Transaksi'} perlu ditransfer`,
-            nominal: templateData.nominal,
-            createdAt: instance.scheduled_date,
-            link: '/recurring-transactions'
-          });
-        });
       }
 
       // === REMINDER KASBON BELUM DISELESAIKAN (Untuk semua user) ===

@@ -14,13 +14,7 @@ import {
   ShieldAlert,
   Wallet,
   ChevronDown,
-  ChevronUp,
-  Repeat,
-  CheckCircle,
-  Clock,
-  ExternalLink,
-  Image,
-  Receipt
+  ChevronUp
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { getAllRecords, getLightweightRows } from '../lib/api';
@@ -56,9 +50,7 @@ const Laporan = () => {
     kasbon: [],
     klaim: [],
     penyelesaian: [],
-    vendors: [],
-    recurringTemplates: [],
-    recurringInstances: []
+    vendors: []
   });
 
   // Filter states
@@ -126,55 +118,12 @@ const Laporan = () => {
         ]);
 
 
-        // Fetch recurring data using API
-        let recurringTemplates = [];
-        let recurringInstances = [];
-        try {
-          // Fetch templates
-          const templates = await getAllRecords('recurring_transactions');
-          // Sort templates by created_at desc (if date strings, standard sort works)
-          recurringTemplates = (templates || []).sort((a, b) =>
-            new Date(b.created_at) - new Date(a.created_at)
-          );
-
-          // Fetch instances
-          const instances = await getAllRecords('recurring_instances');
-
-          // FIX #4: join O(n+m) via Map — sebelumnya .find() di dalam .map()
-          // sehingga O(n*m) dan melambat seiring data bertambah.
-          const templateById = new Map((recurringTemplates || []).map((t) => [t.id, t]));
-          recurringInstances = (instances || [])
-            .map(instance => {
-              const template = templateById.get(instance.recurring_id);
-              // Construct the 'recurring' object structure expected by the UI
-              return {
-                ...instance,
-                recurring: template ? {
-                  id: template.id,
-                  name: template.name,
-                  type: template.type,
-                  template_data: template.template_data,
-                  frequency: template.frequency,
-                  day_of_month: template.day_of_month,
-                  is_active: template.is_active
-                } : null
-              };
-            })
-            // Sort by scheduled_date desc
-            .sort((a, b) => new Date(b.scheduled_date) - new Date(a.scheduled_date));
-
-        } catch (e) {
-          console.log('Error fetching recurring data:', e);
-        }
-
         setReportData({
           paymentRequests: prData || [],
           kasbon: kasbonData || [],
           klaim: klaimData || [],
           penyelesaian: penyelesaianData || [],
-          vendors: vendorData || [],
-          recurringTemplates,
-          recurringInstances
+          vendors: vendorData || []
         });
       } catch (error) {
         console.error('Error fetching report data:', error);
@@ -297,17 +246,6 @@ const Laporan = () => {
       border: 'border-purple-200',
       iconBg: 'bg-purple-500',
       textColor: 'text-purple-700'
-    },
-    'transaksi-berulang': {
-      total: reportData.recurringTemplates.length,
-      nominal: reportData.recurringInstances.reduce((sum, item) => sum + (parseFloat(item.recurring?.template_data?.nominal) || 0), 0),
-      approved: reportData.recurringInstances.filter(item => item.status === 'transferred').length,
-      pending: reportData.recurringInstances.filter(item => item.status === 'pending').length,
-      color: 'cyan',
-      bgGradient: 'from-cyan-50 to-cyan-100',
-      border: 'border-cyan-200',
-      iconBg: 'bg-cyan-500',
-      textColor: 'text-cyan-700'
     }
   };
 
@@ -315,8 +253,7 @@ const Laporan = () => {
     { value: 'payment-request', label: 'Payment Request', icon: FileText },
     { value: 'kasbon', label: 'Kasbon', icon: Wallet },
     { value: 'klaim', label: 'Klaim', icon: TrendingUp },
-    { value: 'penyelesaian', label: 'Penyelesaian', icon: BarChart3 },
-    { value: 'transaksi-berulang', label: 'Transaksi Berulang', icon: Repeat }
+    { value: 'penyelesaian', label: 'Penyelesaian', icon: BarChart3 }
   ];
 
   const periods = [
@@ -408,54 +345,15 @@ const Laporan = () => {
     return filtered;
   };
 
-  // Filter recurring instances by date
-  const filterRecurringByPeriod = (data) => {
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
-    return data.filter(item => {
-      const itemDate = new Date(item.scheduled_date || item.created_at);
-
-      switch (selectedPeriod) {
-        case 'today':
-          const itemDay = new Date(itemDate.getFullYear(), itemDate.getMonth(), itemDate.getDate());
-          return itemDay.getTime() === today.getTime();
-        case 'week':
-          const weekAgo = new Date(today);
-          weekAgo.setDate(weekAgo.getDate() - 7);
-          return itemDate >= weekAgo;
-        case 'month':
-          const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-          return itemDate >= monthStart;
-        case 'quarter':
-          const quarter = Math.floor(now.getMonth() / 3);
-          const quarterStart = new Date(now.getFullYear(), quarter * 3, 1);
-          return itemDate >= quarterStart;
-        case 'year':
-          const yearStart = new Date(now.getFullYear(), 0, 1);
-          return itemDate >= yearStart;
-        case 'custom':
-          if (!customDateFrom && !customDateTo) return true;
-          const from = customDateFrom ? new Date(customDateFrom) : new Date(0);
-          const to = customDateTo ? new Date(customDateTo) : new Date();
-          to.setHours(23, 59, 59, 999);
-          return itemDate >= from && itemDate <= to;
-        default:
-          return true;
-      }
-    });
-  };
-
   // Apply filters to all data
   // FIX: di-memo agar grouping/chart di bawah tidak dihitung ulang tiap render
   // (mis. tiap huruf diketik di pencarian). eslint deps sengaja eksplisit:
-  // applyFilters/filterRecurringByPeriod closure dari state di bawah.
+  // applyFilters closure dari state di bawah.
   const filteredData = useMemo(() => ({
     paymentRequests: applyFilters(reportData.paymentRequests),
     kasbon: applyFilters(reportData.kasbon),
     klaim: applyFilters(reportData.klaim),
-    penyelesaian: applyFilters(reportData.penyelesaian),
-    recurringInstances: filterRecurringByPeriod(reportData.recurringInstances)
+    penyelesaian: applyFilters(reportData.penyelesaian)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [reportData, selectedPeriod, customDateFrom, customDateTo, searchQL, filterTipe, filterIdPerusahaan]);
 
@@ -492,17 +390,6 @@ const Laporan = () => {
       border: 'border-purple-200',
       iconBg: 'bg-purple-500',
       textColor: 'text-purple-700'
-    },
-    'transaksi-berulang': {
-      total: reportData.recurringTemplates.filter(t => t.is_active).length,
-      nominal: filteredData.recurringInstances.reduce((sum, item) => sum + (parseFloat(item.recurring?.template_data?.nominal) || 0), 0),
-      approved: filteredData.recurringInstances.filter(item => item.status === 'transferred').length,
-      pending: filteredData.recurringInstances.filter(item => item.status === 'pending').length,
-      color: 'cyan',
-      bgGradient: 'from-cyan-50 to-cyan-100',
-      border: 'border-cyan-200',
-      iconBg: 'bg-cyan-500',
-      textColor: 'text-cyan-700'
     }
   };
 
@@ -1236,8 +1123,7 @@ const Laporan = () => {
 
 
       {/* Detail Transaksi Gabungan - di bawah filter, di atas grafik */}
-      {selectedReport !== 'transaksi-berulang' && (
-        /* Detail Table - Regular Transactions */
+        {/* Detail Table - Regular Transactions */}
         <div className="card">
           <div className="p-4 sm:p-6">
             <div className="flex items-center justify-between mb-4 sm:mb-6">
@@ -1418,7 +1304,6 @@ const Laporan = () => {
             </div>
           </div>
         </div>
-      )}
 
       {/* Summary Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
@@ -1616,190 +1501,6 @@ const Laporan = () => {
           </div>
         </div>
       </div>
-
-      {/* Detail Table - Recurring Transactions */}
-      {selectedReport === 'transaksi-berulang' && (
-        <div className="card">
-          <div className="p-4 sm:p-6">
-            <div className="flex items-center justify-between mb-4 sm:mb-6">
-              <div className="flex items-center space-x-2 sm:space-x-3">
-                <div className="w-8 h-8 sm:w-10 sm:h-10 bg-cyan-100 rounded-lg flex items-center justify-center">
-                  <Repeat className="w-4 h-4 sm:w-5 sm:h-5 text-cyan-600" />
-                </div>
-                <div>
-                  <h3 className="text-sm sm:text-base font-bold text-gray-800">Detail Transaksi Berulang</h3>
-                  <p className="text-xs sm:text-sm text-gray-600">Riwayat pembayaran berulang dengan bukti transfer</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Summary Cards */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-              <div className="bg-cyan-50 rounded-lg p-3 border border-cyan-100">
-                <div className="flex items-center space-x-2">
-                  <Repeat className="w-4 h-4 text-cyan-600" />
-                  <span className="text-xs text-cyan-600">Template Aktif</span>
-                </div>
-                <p className="text-xl font-bold text-cyan-700 mt-1">
-                  {reportData.recurringTemplates.filter(t => t.is_active).length}
-                </p>
-              </div>
-              <div className="bg-amber-50 rounded-lg p-3 border border-amber-100">
-                <div className="flex items-center space-x-2">
-                  <Clock className="w-4 h-4 text-amber-600" />
-                  <span className="text-xs text-amber-600">Belum Transfer</span>
-                </div>
-                <p className="text-xl font-bold text-amber-700 mt-1">
-                  {filteredData.recurringInstances.filter(i => i.status === 'pending').length}
-                </p>
-              </div>
-              <div className="bg-emerald-50 rounded-lg p-3 border border-emerald-100">
-                <div className="flex items-center space-x-2">
-                  <CheckCircle className="w-4 h-4 text-emerald-600" />
-                  <span className="text-xs text-emerald-600">Sudah Transfer</span>
-                </div>
-                <p className="text-xl font-bold text-emerald-700 mt-1">
-                  {filteredData.recurringInstances.filter(i => i.status === 'transferred').length}
-                </p>
-              </div>
-              <div className="bg-blue-50 rounded-lg p-3 border border-blue-100">
-                <div className="flex items-center space-x-2">
-                  <DollarSign className="w-4 h-4 text-blue-600" />
-                  <span className="text-xs text-blue-600">Total Nominal</span>
-                </div>
-                <p className="text-lg font-bold text-blue-700 mt-1">
-                  Rp {formatRupiah(filteredData.recurringInstances.reduce((sum, i) => sum + (parseFloat(i.recurring?.template_data?.nominal) || 0), 0))}
-                </p>
-              </div>
-            </div>
-
-            <div className="overflow-x-auto -mx-4 sm:mx-0">
-              <div className="inline-block min-w-full align-middle">
-                <div className="overflow-hidden">
-                  <table className="w-full">
-                    <thead className="bg-gray-50 border-b border-gray-200">
-                      <tr>
-                        <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase">Nama Transaksi</th>
-                        <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase">Jadwal</th>
-                        <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase">Bank Tujuan</th>
-                        <th className="text-right py-3 px-4 text-xs font-semibold text-gray-600 uppercase">Nominal</th>
-                        <th className="text-center py-3 px-4 text-xs font-semibold text-gray-600 uppercase">Invoice</th>
-                        <th className="text-center py-3 px-4 text-xs font-semibold text-gray-600 uppercase">Status</th>
-                        <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase">Transfer Oleh</th>
-                        <th className="text-center py-3 px-4 text-xs font-semibold text-gray-600 uppercase">Bukti</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {isLoading ? (
-                        <tr>
-                          <td colSpan="8" className="py-8 text-center">
-                            <div className="flex items-center justify-center space-x-2">
-                              <div className="w-5 h-5 border-2 border-primary-600 border-t-transparent rounded-full animate-spin"></div>
-                              <span className="text-sm text-gray-600">Memuat data...</span>
-                            </div>
-                          </td>
-                        </tr>
-                      ) : filteredData.recurringInstances.length === 0 ? (
-                        <tr>
-                          <td colSpan="8" className="py-8 text-center text-sm text-gray-500">
-                            Tidak ada data transaksi berulang untuk periode ini
-                          </td>
-                        </tr>
-                      ) : (
-                        filteredData.recurringInstances.map((instance) => {
-                          const recurring = instance.recurring;
-                          const templateData = recurring?.template_data || {};
-                          return (
-                            <tr key={instance.id} className="hover:bg-gray-50">
-                              <td className="py-3 px-4">
-                                <div>
-                                  <p className="text-sm font-semibold text-gray-800">{recurring?.name || '-'}</p>
-                                  <p className="text-xs text-gray-500">{templateData.tipe || '-'}</p>
-                                </div>
-                              </td>
-                              <td className="py-3 px-4">
-                                <div className="flex items-center space-x-2">
-                                  <Calendar className="w-4 h-4 text-gray-400" />
-                                  <span className="text-sm text-gray-700">
-                                    {instance.scheduled_date ? new Date(instance.scheduled_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '-'}
-                                  </span>
-                                </div>
-                              </td>
-                              <td className="py-3 px-4">
-                                <div>
-                                  <p className="text-sm font-medium text-gray-800">{templateData.nama_bank || '-'}</p>
-                                  <p className="text-xs text-gray-500">{templateData.nomor_rekening || '-'}</p>
-                                  <p className="text-xs text-gray-400">{templateData.nama_pemilik_rekening || '-'}</p>
-                                </div>
-                              </td>
-                              <td className="py-3 px-4 text-right">
-                                <span className="text-sm font-semibold text-gray-800">
-                                  Rp {formatRupiah(templateData.nominal || 0)}
-                                </span>
-                              </td>
-                              <td className="py-3 px-4 text-center">
-                                {instance.invoice_url ? (
-                                  <a
-                                    href={instance.invoice_url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="inline-flex items-center space-x-1 px-2 py-1 bg-emerald-50 text-emerald-600 rounded-lg text-xs hover:bg-emerald-100 transition-colors"
-                                  >
-                                    <Receipt className="w-3.5 h-3.5" />
-                                    <span>Lihat</span>
-                                  </a>
-                                ) : (
-                                  <span className="text-xs text-gray-400">-</span>
-                                )}
-                              </td>
-                              <td className="py-3 px-4 text-center">
-                                <span className={`inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-semibold ${instance.status === 'transferred'
-                                  ? 'bg-emerald-100 text-emerald-700'
-                                  : instance.status === 'skipped'
-                                    ? 'bg-gray-100 text-gray-600'
-                                    : 'bg-amber-100 text-amber-700'
-                                  }`}>
-                                  {instance.status === 'transferred' ? 'Sudah Transfer' : instance.status === 'skipped' ? 'Dilewati' : 'Belum Transfer'}
-                                </span>
-                              </td>
-                              <td className="py-3 px-4">
-                                <div>
-                                  <p className="text-sm text-gray-700">{instance.transferred_by_name || '-'}</p>
-                                  {instance.transferred_at && (
-                                    <p className="text-xs text-gray-500">
-                                      {new Date(instance.transferred_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
-                                    </p>
-                                  )}
-                                </div>
-                              </td>
-                              <td className="py-3 px-4 text-center">
-                                {instance.bukti_transfer ? (
-                                  <a
-                                    href={instance.bukti_transfer}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="inline-flex items-center space-x-1 px-2 py-1 bg-blue-50 text-blue-600 rounded-lg text-xs hover:bg-blue-100 transition-colors"
-                                  >
-                                    <Image className="w-3.5 h-3.5" />
-                                    <span>Lihat</span>
-                                    <ExternalLink className="w-3 h-3" />
-                                  </a>
-                                ) : (
-                                  <span className="text-xs text-gray-400">-</span>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Info Banner */}
       <div className="card bg-gradient-to-r from-primary-500 to-primary-600 border-0">

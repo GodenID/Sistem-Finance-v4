@@ -47,7 +47,6 @@ export const PERMISSION_GROUPS = [
     permissions: [
       { key: 'view_laporan', label: 'Akses Laporan', desc: 'Lihat menu & data Laporan' },
       { key: 'view_confidential', label: 'Lihat Data Konfidensial', desc: 'Lihat data bertanda konfidensial' },
-      { key: 'manage_recurring', label: 'Transaksi Berulang', desc: 'Kelola Transaksi Berulang' },
     ],
   },
 ];
@@ -79,7 +78,6 @@ export const ROLE_DEFAULTS = {
     transfer: false,
     view_laporan: true,
     view_confidential: true,
-    manage_recurring: false,
   },
   team_finance: {
     ...ALL_FALSE,
@@ -92,7 +90,6 @@ export const ROLE_DEFAULTS = {
     transfer: true,
     view_laporan: true,
     view_confidential: true,
-    manage_recurring: true,
   },
   manager: {
     ...ALL_FALSE,
@@ -109,7 +106,6 @@ export const ROLE_DEFAULTS = {
     transfer: false,
     view_laporan: true,
     view_confidential: true,
-    manage_recurring: false,
   },
   hrd: {
     ...ALL_FALSE,

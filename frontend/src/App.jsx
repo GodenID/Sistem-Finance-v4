@@ -27,12 +27,10 @@ const Laporan = React.lazy(() => import('./pages/Laporan'));
 const ActivityLog = React.lazy(() => import('./pages/ActivityLog'));
 const Karyawan = React.lazy(() => import('./pages/Karyawan'));
 const Backup = React.lazy(() => import('./pages/Backup'));
-const Storage = React.lazy(() => import('./pages/Storage'));
 const Changelog = React.lazy(() => import('./pages/Changelog'));
 const Performance = React.lazy(() => import('./pages/Performance'));
 const Profile = React.lazy(() => import('./pages/Profile'));
 const Users = React.lazy(() => import('./pages/Users'));
-const RecurringTransactions = React.lazy(() => import('./pages/RecurringTransactions'));
 const ImageToPdf = React.lazy(() => import('./pages/ImageToPdf'));
 const Maintenance = React.lazy(() => import('./pages/Maintenance'));
 const MaintenancePage = React.lazy(() => import('./pages/MaintenancePage'));
@@ -126,14 +124,6 @@ function App() {
                                     }
                                   />
                                   <Route
-                                    path="/storage"
-                                    element={
-                                      <AdminRoute>
-                                        <Storage />
-                                      </AdminRoute>
-                                    }
-                                  />
-                                  <Route
                                     path="/performance"
                                     element={
                                       <AdminRoute>
@@ -145,7 +135,6 @@ function App() {
                                   <Route path="/profile" element={<Profile />} />
                                   <Route path="/profile/:id" element={<Profile />} />
                                   <Route path="/users" element={<Users />} />
-                                  <Route path="/recurring" element={<RecurringTransactions />} />
                                   <Route path="/tools/image-to-pdf" element={<ImageToPdf />} />
                                   <Route
                                     path="/maintenance"
