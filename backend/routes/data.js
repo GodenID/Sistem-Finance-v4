@@ -62,10 +62,16 @@ const tableOf = (req) => {
     return table;
 };
 
-const assertWritable = (req, table) => {
-    if (ADMIN_WRITE_TABLES.has(table) && req.user.role !== 'administrator') {
-        throw httpError(403, 'Hanya administrator yang boleh mengubah data ini');
+// Kolom profil yang boleh diubah user untuk akunnya sendiri.
+const SELF_WRITE_USER_COLUMNS = new Set(['name', 'email', 'email_notifications_enabled']);
+
+const assertWritable = (req, table, patch = null) => {
+    if (!ADMIN_WRITE_TABLES.has(table) || req.user.role === 'administrator') return;
+    if (table === 'users' && patch && req.user.id === req.params.id) {
+        const forbidden = Object.keys(patch).filter((column) => !SELF_WRITE_USER_COLUMNS.has(column));
+        if (!forbidden.length) return;
     }
+    throw httpError(403, 'Hanya administrator yang boleh mengubah data ini');
 };
 
 const parseFilters = (req) => {
@@ -454,8 +460,8 @@ router.post('/:table', async (req, res) => {
 const updateById = async (req, res) => {
     try {
         const table = tableOf(req);
-        assertWritable(req, table);
         const patch = req.body?.updates || req.body?.row || req.body;
+        assertWritable(req, table, patch);
         if (!patch || typeof patch !== 'object') throw httpError(400, 'Body kosong');
         const payload = prepareWriteRow(patch, await jsonColumnsFor(table));
         const columns = Object.keys(payload);
