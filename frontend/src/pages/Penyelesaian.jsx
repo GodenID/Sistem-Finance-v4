@@ -58,7 +58,7 @@ const Penyelesaian = () => {
     kasbonNominal: 0,
     namaKaryawan: isGuest ? '' : userName || '',
     detailPengeluaran: [],
-    metodePengembalian: '',
+    metodePengembalian: 'Transfer',
     lampiran: null,
     lampiranPengembalian: null,
     keterangan: '',
@@ -415,7 +415,7 @@ const Penyelesaian = () => {
         namaEvent: kasbon.namaEvent || '', // Auto-fill namaEvent from kasbon
         kasbonNominal: kasbon.nominal || 0,
         namaKaryawan: kasbon.namaKaryawan || '',
-        ...(isGantiKasbon ? { metodePengembalian: '' } : {}),
+        ...(isGantiKasbon ? { metodePengembalian: 'Transfer' } : {}),
       };
     });
   };
@@ -661,7 +661,7 @@ const Penyelesaian = () => {
         return {
           ...prev,
           detailPengeluaran: newExpenses,
-          metodePengembalian: '' // Reset karena total berubah
+          metodePengembalian: 'Transfer' // Reset karena total berubah
         };
       });
       setNewExpenseItem({ deskripsi: '', nominal: '' });
@@ -672,7 +672,7 @@ const Penyelesaian = () => {
     setFormData(prev => ({
       ...prev,
       detailPengeluaran: prev.detailPengeluaran.filter((_, i) => i !== index),
-      metodePengembalian: '' // Reset karena total berubah
+      metodePengembalian: 'Transfer' // Reset karena total berubah
     }));
   };
 
@@ -745,7 +745,7 @@ const Penyelesaian = () => {
         total_nominal: totalPengeluaran,
         selisih: selisih,
         status_selisih: statusSelisih,
-        metode_pengembalian: formData.metodePengembalian || null,
+        metode_pengembalian: statusSelisih === 'Pengembalian' ? (formData.metodePengembalian || 'Transfer') : null,
         lampiran: formData.lampiran || null,
         lampiran_pengembalian: formData.lampiranPengembalian || null,
         keterangan: formData.keterangan || null,
@@ -794,7 +794,7 @@ const Penyelesaian = () => {
         kasbonNominal: 0,
         namaKaryawan: isGuest ? '' : userName || '',
         detailPengeluaran: [],
-        metodePengembalian: '',
+        metodePengembalian: 'Transfer',
         lampiran: null,
         lampiranPengembalian: null,
         keterangan: '',
@@ -1930,7 +1930,7 @@ const Penyelesaian = () => {
                     <label className="block text-sm font-semibold text-blue-800 mb-3">
                       Pilih Metode Pengembalian Sisa Dana <span className="text-red-500">*</span>
                     </label>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 gap-3">
                       <button
                         type="button"
                         onClick={() => setFormData(prev => ({ ...prev, metodePengembalian: 'Transfer' }))}
@@ -1942,23 +1942,6 @@ const Penyelesaian = () => {
                         <Banknote className={`w-6 h-6 ${formData.metodePengembalian === 'Transfer' ? 'text-blue-600' : 'text-gray-600'}`} />
                         <span className={`font-medium ${formData.metodePengembalian === 'Transfer' ? 'text-blue-700' : 'text-gray-700'}`}>
                           Transfer Bank
-                        </span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setFormData(prev => ({ ...prev, metodePengembalian: 'Cash', lampiranPengembalian: null }));
-                          setFileNamePengembalian('');
-                          setFileSizePengembalian(0);
-                        }}
-                        className={`flex items-center justify-center space-x-3 p-4 rounded-lg border-2 transition-all ${formData.metodePengembalian === 'Cash'
-                          ? 'border-emerald-500 bg-emerald-100'
-                          : 'border-blue-200 hover:border-blue-300 bg-white'
-                          }`}
-                      >
-                        <Wallet className={`w-6 h-6 ${formData.metodePengembalian === 'Cash' ? 'text-emerald-600' : 'text-gray-600'}`} />
-                        <span className={`font-medium ${formData.metodePengembalian === 'Cash' ? 'text-emerald-700' : 'text-gray-700'}`}>
-                          Cash / Tunai
                         </span>
                       </button>
                     </div>

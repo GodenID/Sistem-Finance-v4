@@ -85,7 +85,7 @@ const Klaim = () => {
     idPerusahaan: '',
     namaKaryawan: isGuest ? '' : userName || '',
     nominal: '',
-    metodePembayaran: '',
+    metodePembayaran: 'Transfer',
     namaBank: '',
     nomorRekening: '',
     namaPemilikRekening: '',
@@ -335,16 +335,6 @@ const Klaim = () => {
     }));
 
     // Auto-set ID Perusahaan tidak diperlukan lagi - semua options ditampilkan
-
-    // Reset bank fields jika Cash dipilih
-    if (name === 'metodePembayaran' && value === 'Cash') {
-      setFormData(prev => ({
-        ...prev,
-        namaBank: '',
-        nomorRekening: '',
-        namaPemilikRekening: ''
-      }));
-    }
   };
 
   const handleNominalChange = (e) => {
@@ -525,7 +515,7 @@ const Klaim = () => {
           tipe: formData.tipe,
           id_perusahaan: formData.idPerusahaan || null,
           nominal: parseFloat(formData.nominal),
-          metode_pembayaran: formData.metodePembayaran || null,
+          metode_pembayaran: formData.metodePembayaran || 'Transfer',
           nama_bank: formData.namaBank || null,
           nomor_rekening: formData.nomorRekening || null,
           nama_pemilik_rekening: formData.namaPemilikRekening || null,
@@ -583,7 +573,7 @@ const Klaim = () => {
           tipe: formData.tipe,
           id_perusahaan: formData.idPerusahaan || null,
           nominal: parseFloat(formData.nominal),
-          metode_pembayaran: formData.metodePembayaran || null,
+          metode_pembayaran: formData.metodePembayaran || 'Transfer',
           nama_bank: formData.namaBank || null,
           nomor_rekening: formData.nomorRekening || null,
           nama_pemilik_rekening: formData.namaPemilikRekening || null,
@@ -637,7 +627,7 @@ const Klaim = () => {
         idPerusahaan: '',
         nominal: '',
         namaKaryawan: isGuest ? '' : userName || '',
-        metodePembayaran: '',
+        metodePembayaran: 'Transfer',
         namaBank: '',
         nomorRekening: '',
         namaPemilikRekening: '',
@@ -1931,7 +1921,7 @@ const Klaim = () => {
                   {/* Metode Pembayaran */}
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-2">Metode Pembayaran <span className="text-red-500">*</span></label>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 gap-3">
                       <button
                         type="button"
                         onClick={() => handleInputChange({ target: { name: 'metodePembayaran', value: 'Transfer' } })}
@@ -1943,19 +1933,6 @@ const Klaim = () => {
                         <Banknote className={`w-6 h-6 ${formData.metodePembayaran === 'Transfer' ? 'text-blue-600' : 'text-gray-600'}`} />
                         <span className={`font-medium ${formData.metodePembayaran === 'Transfer' ? 'text-blue-700' : 'text-gray-700'}`}>
                           Transfer Bank
-                        </span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleInputChange({ target: { name: 'metodePembayaran', value: 'Cash' } })}
-                        className={`flex items-center justify-center space-x-3 p-4 rounded-lg border-2 transition-all ${formData.metodePembayaran === 'Cash'
-                          ? 'border-emerald-500 bg-emerald-50'
-                          : 'border-gray-200 hover:border-gray-300 bg-white'
-                          }`}
-                      >
-                        <Wallet className={`w-6 h-6 ${formData.metodePembayaran === 'Cash' ? 'text-emerald-600' : 'text-gray-600'}`} />
-                        <span className={`font-medium ${formData.metodePembayaran === 'Cash' ? 'text-emerald-700' : 'text-gray-700'}`}>
-                          Cash / Tunai
                         </span>
                       </button>
                     </div>
