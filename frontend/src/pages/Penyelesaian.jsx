@@ -750,7 +750,7 @@ const Penyelesaian = () => {
         lampiran_pengembalian: formData.lampiranPengembalian || null,
         keterangan: formData.keterangan || null,
         status_approval: isBOD ? 'Approved' : 'Pending',
-        disetujui_oleh: isBOD ? userName : null,
+        disetujui_oleh: isBOD ? userId : null,
         manager_approved_by: isBOD ? userName : null,
         manager_approved_at: isBOD ? new Date().toISOString() : null,
         head_finance_approved_by: isBOD ? userName : null,

@@ -173,6 +173,38 @@ const sanitizeRows = (req, table, rows) => {
     });
 };
 
+// node-postgres mengirim array/objek JS sebagai literal array Postgres, bukan
+// JSON. Kolom json/jsonb harus di-stringify dulu. Tipe kolom diambil sekali
+// per tabel lalu di-cache sampai proses restart (schema jarang berubah).
+const jsonColumnsCache = new Map();
+
+const jsonColumnsFor = async (table) => {
+    const cached = jsonColumnsCache.get(table);
+    if (cached) return cached;
+    const result = await db.query(
+        `SELECT column_name
+           FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = $1
+            AND data_type IN ('json', 'jsonb')`,
+        [table]
+    );
+    const columns = new Set(result.rows.map((row) => row.column_name));
+    jsonColumnsCache.set(table, columns);
+    return columns;
+};
+
+const prepareWriteRow = (row, jsonColumns) => {
+    if (!jsonColumns.size) return row;
+    const prepared = { ...row };
+    for (const column of jsonColumns) {
+        const value = prepared[column];
+        if (value !== null && value !== undefined && typeof value === 'object') {
+            prepared[column] = JSON.stringify(value);
+        }
+    }
+    return prepared;
+};
+
 // ---------------------------------------------------------------------------
 // RPC pengganti get_dashboard_counts (tanpa bergantung pada fungsi SQL lama)
 // ---------------------------------------------------------------------------
@@ -393,10 +425,13 @@ router.post('/:table', async (req, res) => {
         const columns = [...new Set(clean.flatMap((row) => Object.keys(row)))];
         columns.forEach(ident);
         const returning = selectClause(req);
+        const jsonColumns = await jsonColumnsFor(table);
         const values = [];
         const tuples = clean.map((row) => {
+            const prepared = prepareWriteRow(row, jsonColumns);
             const placeholders = columns.map((column) => {
-                values.push(row[column] === undefined ? null : row[column]);
+                const value = prepared[column];
+                values.push(value === undefined ? null : value);
                 return `$${values.length}`;
             });
             return `(${placeholders.join(', ')})`;
@@ -422,11 +457,12 @@ const updateById = async (req, res) => {
         assertWritable(req, table);
         const patch = req.body?.updates || req.body?.row || req.body;
         if (!patch || typeof patch !== 'object') throw httpError(400, 'Body kosong');
-        const columns = Object.keys(patch);
+        const payload = prepareWriteRow(patch, await jsonColumnsFor(table));
+        const columns = Object.keys(payload);
         if (!columns.length) throw httpError(400, 'Tidak ada kolom yang diubah');
         const values = columns.map((column) => {
             ident(column);
-            return patch[column] === undefined ? null : patch[column];
+            return payload[column] === undefined ? null : payload[column];
         });
         values.push(req.params.id);
         const assignments = columns.map((column, index) => `${ident(column)} = $${index + 1}`).join(', ');
@@ -451,11 +487,12 @@ const updateByFilter = async (req, res) => {
         assertWritable(req, table);
         const patch = req.body?.updates || req.body?.row || req.body;
         if (!patch || typeof patch !== 'object') throw httpError(400, 'Body kosong');
-        const columns = Object.keys(patch);
+        const payload = prepareWriteRow(patch, await jsonColumnsFor(table));
+        const columns = Object.keys(payload);
         if (!columns.length) throw httpError(400, 'Tidak ada kolom yang diubah');
         const values = columns.map((column) => {
             ident(column);
-            return patch[column] === undefined ? null : patch[column];
+            return payload[column] === undefined ? null : payload[column];
         });
         const assignments = columns.map((column, index) => `${ident(column)} = $${index + 1}`).join(', ');
         const filters = parseFilters(req);
