@@ -16,13 +16,12 @@ export default defineConfig({
         manualChunks: {
           // Core React libraries
           'vendor-react': ['react', 'react-dom', 'react-router-dom'],
-          // UI Components & Icons
-          'vendor-ui': ['lucide-react', 'recharts'],
-          // Heavy libraries (PDF & Excel)
-          // NOTE (FIX #5): 'xlsx' sengaja TIDAK dicantumkan agar hasil
-          // `await import('xlsx')` menjadi chunk on-demand tersendiri,
-          // bukan ikut vendor-utils yang dimuat di awal rute.
-          'vendor-utils': ['jspdf', 'jszip', 'file-saver'],
+          // Ikon dipakai Sidebar/Header sejak awal, jadi ikut chunk awal.
+          'vendor-ui': ['lucide-react'],
+          // recharts, jspdf, jszip, dan file-saver sengaja TIDAK dipatok di sini:
+          // manualChunks menggabungkan semuanya jadi satu chunk, sehingga
+          // recharts/jspdf (berat, hanya dipakai halaman detail/laporan) ikut
+          // terunduh di load pertama. Biarkan Rollup memecahnya per halaman.
           // Backend/Data handling
           'vendor-data': ['axios']
         }

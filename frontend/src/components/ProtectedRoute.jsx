@@ -22,12 +22,11 @@ const ProtectedRoute = ({ children }) => {
       }
     };
 
-    if (isAuthenticated) {
-      checkMaintenance();
-    } else {
-      setCheckingMaintenance(false);
-    }
-  }, [isAuthenticated]);
+    // Jalankan paralel dengan verifikasi sesi (/api/auth/me). Dulu menunggu
+    // isAuthenticated, jadi dua round trip serial sebelum halaman dirender.
+    // Tanpa token request gagal → getMaintenanceMode sudah mengembalikan false.
+    checkMaintenance();
+  }, []);
 
   // Show loading spinner saat checking authentication
   if (isLoading || checkingMaintenance) {
