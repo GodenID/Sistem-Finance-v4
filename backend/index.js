@@ -1,7 +1,6 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -40,9 +39,6 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve uploaded files statically
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
 // Health check endpoint
 app.get('/api/health', (req, res) => {
     res.json({
@@ -61,21 +57,12 @@ app.use('/api/penyelesaian', require('./routes/penyelesaian'));
 app.use('/api/vendors', require('./routes/vendors'));
 app.use('/api/users', require('./routes/users'));
 app.use('/api/activity-logs', require('./routes/activityLogs'));
-app.use('/api/upload', require('./routes/upload'));
-app.use('/api/recurring-transactions', require('./routes/recurringTransactions'));
-app.use('/api/recurring-instances', require('./routes/recurringInstances'));
+app.use('/api/files', require('./routes/files'));
 app.use('/api/data', require('./routes/data'));
 
 // Error handling middleware
 app.use((err, req, res, next) => {
     console.error('Error:', err);
-
-    if (err.name === 'MulterError') {
-        if (err.code === 'LIMIT_FILE_SIZE') {
-            return res.status(400).json({ error: 'File terlalu besar. Maksimal 10MB.' });
-        }
-        return res.status(400).json({ error: err.message });
-    }
 
     res.status(500).json({
         error: 'Internal server error',

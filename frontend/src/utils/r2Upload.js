@@ -15,9 +15,11 @@ if (!WORKER_URL || WORKER_URL.includes('your-account')) {
   console.error('💡 Contoh: VITE_R2_WORKER_URL=https://upload.prasastigroup.id');
 }
 
-// Kunci hapus file (opsional — samakan dengan DELETE_SECRET di env worker).
-// Bila kosong, worker tetap mengizinkan hapus (mode dev) sambil log peringatan.
-const DELETE_KEY = import.meta.env.VITE_R2_DELETE_KEY || '';
+// Hapus file lewat backend (JWT), bukan langsung ke worker. DELETE_SECRET
+// tidak boleh ada di bundle frontend: nilainya terbaca siapa pun.
+const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || '').replace(/\/+$/, '');
+const AUTH_TOKEN_KEY = 'authToken';
+const DELETE_BATCH = 20;
 
 /**
  * Ambil object key R2 dari URL publik file.
@@ -37,30 +39,42 @@ export function extractR2Key(fileUrlOrKey) {
   }
 }
 
-/**
- * Hapus satu file di R2 via Worker (best-effort: gagal = return false, tidak throw).
- * @param {string} fileUrlOrKey - URL publik atau object key
- * @returns {Promise<boolean>} true bila terhapus (atau worker OK)
- */
-export async function deleteR2File(fileUrlOrKey) {
-  try {
-    if (!WORKER_URL || WORKER_URL.includes('your-account')) return false;
-    const key = extractR2Key(fileUrlOrKey);
-    if (!key) return false;
+async function deleteKeys(keys) {
+  const failedAll = keys.slice();
+  if (!BACKEND_URL || keys.length === 0) return { deleted: [], failed: failedAll };
 
-    const response = await fetch(`${WORKER_URL}?key=${encodeURIComponent(key)}`, {
-      method: 'DELETE',
-      headers: DELETE_KEY ? { 'X-Delete-Key': DELETE_KEY } : {},
+  const token = localStorage.getItem(AUTH_TOKEN_KEY) || '';
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/files/delete`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ keys }),
     });
     if (!response.ok) {
-      console.warn('⚠️ Gagal menghapus file R2:', key, response.status);
-      return false;
+      console.warn('⚠️ Gagal menghapus file:', response.status);
+      return { deleted: [], failed: failedAll };
     }
-    return true;
+    const data = await response.json().catch(() => ({}));
+    return { deleted: data.deleted || [], failed: data.failed || [] };
   } catch (error) {
-    console.warn('⚠️ Gagal menghapus file R2:', error?.message);
-    return false;
+    console.warn('⚠️ Gagal menghapus file:', error?.message);
+    return { deleted: [], failed: failedAll };
   }
+}
+
+/**
+ * Hapus satu file (best-effort: gagal = return false, tidak throw).
+ * @param {string} fileUrlOrKey - URL publik atau object key
+ * @returns {Promise<boolean>} true bila terhapus
+ */
+export async function deleteR2File(fileUrlOrKey) {
+  const key = extractR2Key(fileUrlOrKey);
+  if (!key) return false;
+  const result = await deleteKeys([key]);
+  return result.deleted.length > 0;
 }
 
 /**
@@ -69,15 +83,18 @@ export async function deleteR2File(fileUrlOrKey) {
  * @returns {Promise<{deleted: string[], failed: string[]}>}
  */
 export async function deleteR2Files(urls) {
-  const list = [...new Set((urls || []).filter(Boolean))];
+  const entries = [...new Set((urls || []).filter(Boolean))]
+    .map((url) => ({ url, key: extractR2Key(url) }))
+    .filter((entry) => entry.key);
+
   const deleted = [];
   const failed = [];
-  // Batasi konkurensi agar tidak membanjiri worker
-  const CONCURRENCY = 5;
-  for (let i = 0; i < list.length; i += CONCURRENCY) {
-    const batch = list.slice(i, i + CONCURRENCY);
-    const results = await Promise.all(batch.map((u) => deleteR2File(u)));
-    batch.forEach((u, idx) => (results[idx] ? deleted.push(u) : failed.push(u)));
+  for (let i = 0; i < entries.length; i += DELETE_BATCH) {
+    const batch = entries.slice(i, i + DELETE_BATCH);
+    const result = await deleteKeys(batch.map((entry) => entry.key));
+    batch.forEach((entry) => {
+      (result.deleted.includes(entry.key) ? deleted : failed).push(entry.url);
+    });
   }
   return { deleted, failed };
 }
