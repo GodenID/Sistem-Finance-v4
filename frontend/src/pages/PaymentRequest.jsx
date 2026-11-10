@@ -1722,6 +1722,43 @@ const PaymentRequest = () => {
                                 <Eye className="w-4 h-4" />
                                 <span>Detail</span>
                               </button>
+                              {/* Approve/Reject sengaja di luar gate edit: manager dan head
+                                  finance tidak punya izin edit, tapi harus bisa aksi dari list
+                                  tanpa buka Detail (sama seperti Klaim). */}
+                              {(canApproveManager || canApproveHead || isAuthorizedApprover) &&
+                                (request.statusApproval === 'Pending' || request.statusApproval === 'Manager Approved') && (
+                                  <>
+                                    {canApproveManager && request.statusApproval === 'Pending' && (
+                                      <button
+                                        onClick={() => handleApprove(request)}
+                                        className="flex items-center space-x-1 px-3 py-1.5 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 transition-colors text-sm font-medium"
+                                        title="Approve Manager"
+                                      >
+                                        <CheckCircle className="w-4 h-4" />
+                                        <span>Approve</span>
+                                      </button>
+                                    )}
+                                    {canApproveHead && request.statusApproval === 'Manager Approved' && (
+                                      <button
+                                        onClick={() => handleApproveHead(request)}
+                                        className="flex items-center space-x-1 px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors text-sm font-medium"
+                                        title="Approve Head Finance"
+                                      >
+                                        <CheckCircle className="w-4 h-4" />
+                                        <span>Approve HF</span>
+                                      </button>
+                                    )}
+                                    <button
+                                      onClick={() => handleReject(request)}
+                                      className="flex items-center space-x-1 px-3 py-1.5 bg-rose-50 text-rose-600 rounded-lg hover:bg-rose-100 transition-colors text-sm font-medium"
+                                      title="Reject"
+                                    >
+                                      <XCircle className="w-4 h-4" />
+                                      <span>Reject</span>
+                                    </button>
+                                  </>
+                                )}
+
                               {canEditDelete && !isLocked(request) && (
                                 <>
                                   {isSubmitting ? (
@@ -1736,36 +1773,6 @@ const PaymentRequest = () => {
                                         <Edit2 className="w-4 h-4" />
                                         <span>Edit</span>
                                       </button>
-                                      {canApproveManager && request.statusApproval === 'Pending' && (
-                                        <button
-                                          onClick={() => handleApprove(request)}
-                                          className="flex items-center space-x-1 px-3 py-1.5 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 transition-colors text-sm font-medium"
-                                          title="Approve Manager"
-                                        >
-                                          <CheckCircle className="w-4 h-4" />
-                                          <span>Approve</span>
-                                        </button>
-                                      )}
-                                      {canApproveHead && request.statusApproval === 'Manager Approved' && (
-                                        <button
-                                          onClick={() => handleApproveHead(request)}
-                                          className="flex items-center space-x-1 px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors text-sm font-medium"
-                                          title="Approve Head Finance"
-                                        >
-                                          <CheckCircle className="w-4 h-4" />
-                                          <span>Approve HF</span>
-                                        </button>
-                                      )}
-                                      {(canApproveManager || canApproveHead || isAuthorizedApprover) && (request.statusApproval === 'Pending' || request.statusApproval === 'Manager Approved') && (
-                                        <button
-                                          onClick={() => handleReject(request)}
-                                          className="flex items-center space-x-1 px-3 py-1.5 bg-rose-50 text-rose-600 rounded-lg hover:bg-rose-100 transition-colors text-sm font-medium"
-                                          title="Reject"
-                                        >
-                                          <XCircle className="w-4 h-4" />
-                                          <span>Reject</span>
-                                        </button>
-                                      )}
                                       {canDelete && (
                                         <button
                                           onClick={() => handleDelete(request)}
