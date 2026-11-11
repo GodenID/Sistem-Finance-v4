@@ -56,6 +56,7 @@ const PaymentRequest = () => {
   const [filterStatus, setFilterStatus] = useState('all'); // all, belum-transfer, sudah-transfer
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [filterIdPerusahaan, setFilterIdPerusahaan] = useState('');
   const ITEMS_PER_PAGE = 10;
 
   // State untuk bulk delete (hanya Administrator)
@@ -183,8 +184,9 @@ const PaymentRequest = () => {
     if (filterStatus === 'sudah-transfer') f.status_transfer = 'Sudah Transfer';
     if (dateFrom) f.start_date = dateFrom;
     if (dateTo) f.end_date = dateTo;
+    if (filterIdPerusahaan) f.id_perusahaan = filterIdPerusahaan;
     return f;
-  }, [filterStatus, dateFrom, dateTo]);
+  }, [filterStatus, dateFrom, dateTo, filterIdPerusahaan]);
 
   const {
     items: paymentRequests,
@@ -210,7 +212,7 @@ const PaymentRequest = () => {
     setServerFilters(serverFilters);
     setCurrentPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterStatus, dateFrom, dateTo]);
+  }, [filterStatus, dateFrom, dateTo, filterIdPerusahaan]);
 
   // Statistik kartu via HEAD count (4 request ringan, tanpa download row).
   const [prStats, setPrStats] = useState({ total: 0, belum: 0, sudah: 0, approved: 0 });
@@ -1451,19 +1453,42 @@ const PaymentRequest = () => {
             </div>
 
             {/* Clear Filter & Search */}
-            {(filterStatus !== 'all' || searchTerm || dateFrom || dateTo) && (
+            {(filterStatus !== 'all' || searchTerm || dateFrom || dateTo || filterIdPerusahaan) && (
               <button
                 onClick={() => {
                   setFilterStatus('all');
                   setSearchTerm('');
                   setDateFrom('');
                   setDateTo('');
+                  setFilterIdPerusahaan('');
                 }}
                 className="ml-auto px-4 py-2 bg-rose-50 text-rose-600 rounded-lg text-sm font-medium hover:bg-rose-100 transition-colors"
               >
                 Clear All
               </button>
             )}
+          </div>
+
+          {/* Filter ID Perusahaan */}
+          <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+            <div className="flex items-center space-x-2">
+              <Filter className="w-4 h-4 text-gray-600" />
+              <span className="text-sm font-semibold text-gray-700">Filter ID Perusahaan:</span>
+            </div>
+            <div className="flex-1">
+              <select
+                value={filterIdPerusahaan}
+                onChange={(e) => setFilterIdPerusahaan(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+              >
+                <option value="">Semua ID Perusahaan</option>
+                {getIdPerusahaanOptionsByRole(userRole).map((company) => (
+                  <option key={company.value} value={company.value}>
+                    {company.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           {/* Filter Tanggal */}
@@ -1829,11 +1854,12 @@ const PaymentRequest = () => {
                                 : 'Tidak ada payment request dengan filter yang dipilih'}
                             </p>
                           </div>
-                          {(filterStatus !== 'all' || searchTerm) && (
+                          {(filterStatus !== 'all' || searchTerm || filterIdPerusahaan) && (
                             <button
                               onClick={() => {
                                 setFilterStatus('all');
                                 setSearchTerm('');
+                                setFilterIdPerusahaan('');
                               }}
                               className="mt-2 px-4 py-2 bg-primary-50 text-primary-600 rounded-lg text-sm font-medium hover:bg-primary-100 transition-colors"
                             >

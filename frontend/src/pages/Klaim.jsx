@@ -48,6 +48,7 @@ const Klaim = () => {
   const [filterStatus, setFilterStatus] = useState('all');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [filterIdPerusahaan, setFilterIdPerusahaan] = useState('');
   const ITEMS_PER_PAGE = 10;
   const [showModal, setShowModal] = useState(false);
 
@@ -207,8 +208,9 @@ const Klaim = () => {
     if (filterStatus === 'sudah-transfer') f.status_transfer = 'Sudah Transfer';
     if (dateFrom) f.start_date = dateFrom;
     if (dateTo) f.end_date = dateTo;
+    if (filterIdPerusahaan) f.id_perusahaan = filterIdPerusahaan;
     return f;
-  }, [filterStatus, dateFrom, dateTo]);
+  }, [filterStatus, dateFrom, dateTo, filterIdPerusahaan]);
 
   const {
     items: klaimRequests,
@@ -234,7 +236,7 @@ const Klaim = () => {
     setServerFilters(serverFilters);
     setCurrentPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterStatus, dateFrom, dateTo]);
+  }, [filterStatus, dateFrom, dateTo, filterIdPerusahaan]);
 
   // Statistik kartu via HEAD count (4 request ringan, tanpa download row).
   const [klaimStats, setKlaimStats] = useState({ total: 0, belum: 0, sudah: 0, approved: 0 });
@@ -1182,19 +1184,42 @@ const Klaim = () => {
               </button>
             </div>
 
-            {(filterStatus !== 'all' || searchTerm || dateFrom || dateTo) && (
+            {(filterStatus !== 'all' || searchTerm || dateFrom || dateTo || filterIdPerusahaan) && (
               <button
                 onClick={() => {
                   setFilterStatus('all');
                   setSearchTerm('');
                   setDateFrom('');
                   setDateTo('');
+                  setFilterIdPerusahaan('');
                 }}
                 className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-300 transition-colors"
               >
                 Clear All
               </button>
             )}
+          </div>
+
+          {/* Filter ID Perusahaan */}
+          <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+            <div className="flex items-center space-x-2">
+              <Filter className="w-4 h-4 text-gray-600" />
+              <span className="text-sm font-semibold text-gray-700">Filter ID Perusahaan:</span>
+            </div>
+            <div className="flex-1">
+              <select
+                value={filterIdPerusahaan}
+                onChange={(e) => setFilterIdPerusahaan(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              >
+                <option value="">Semua ID Perusahaan</option>
+                {getIdPerusahaanOptionsByRole(userRole).map((company) => (
+                  <option key={company.value} value={company.value}>
+                    {company.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           {/* Filter Tanggal */}
